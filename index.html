@@ -403,15 +403,20 @@ function placeSprawl(rng) {
   return { gx, gz, algo: 'Sprawl' };
 }
 
+// Pick one algorithm per session — re-rolled on reset
+const ALGO_CHOICES = [
+  { name: 'DLA',    fn: placeDLA },
+  { name: 'Eden',   fn: placeEden },
+  { name: 'Sprawl', fn: placeSprawl },
+];
+let chosenAlgo = ALGO_CHOICES[Math.floor(Math.random() * ALGO_CHOICES.length)];
+
 function findPlacement(rng) {
   if (grid.size === 0) {
     grid.add(key(HALF_GRID, HALF_GRID));
-    return { gx: HALF_GRID, gz: HALF_GRID, algo: 'Seed' };
+    return { gx: HALF_GRID, gz: HALF_GRID, algo: chosenAlgo.name };
   }
-  const roll = rng();
-  if (roll < 0.33) return placeDLA(rng);
-  if (roll < 0.66) return placeEden(rng);
-  return placeSprawl(rng);
+  return chosenAlgo.fn(rng);
 }
 
 // ===================== SEEDED RNG =====================
@@ -677,9 +682,6 @@ function addBuilding(chord, velocity) {
   startRoadGrowth();
 
   countEl.textContent = buildings.length;
-  const algoClass = algo === 'DLA' ? 'algo-dla' : algo === 'Eden' ? 'algo-eden' : algo === 'Sprawl' ? 'algo-sprawl' : 'dim';
-  algoEl.className = algoClass;
-  algoEl.textContent = algo;
   updateCamera();
 }
 
@@ -730,9 +732,17 @@ function resetCity() {
   // Stop road growth
   if (roadInterval) { clearInterval(roadInterval); roadInterval = null; }
   countEl.textContent = '0';
-  algoEl.textContent = '—'; algoEl.className = 'dim';
   desiredCamPos.set(0, 100, 70);
   desiredCamTarget.set(0, 0, 0);
+  // Re-roll algorithm for next session
+  chosenAlgo = ALGO_CHOICES[Math.floor(Math.random() * ALGO_CHOICES.length)];
+  showAlgo();
+}
+
+function showAlgo() {
+  const cls = chosenAlgo.name === 'DLA' ? 'algo-dla' : chosenAlgo.name === 'Eden' ? 'algo-eden' : 'algo-sprawl';
+  algoEl.className = cls;
+  algoEl.textContent = chosenAlgo.name;
 }
 
 document.addEventListener('keydown', (e) => {
@@ -829,6 +839,7 @@ function animate() {
 
 // ===================== INIT =====================
 buildPianoUI();
+showAlgo();
 animate();
 initMIDI();
 
