@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI City Generator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; color: #e0e0e0; }
+  canvas { display: block; }
+  #ui { position: fixed; top: 20px; left: 20px; z-index: 10; pointer-events: none; }
+  #status {
+    background: rgba(0,0,0,0.7); padding: 10px 16px; border-radius: 8px;
+    font-size: 13px; border: 1px solid rgba(100,255,150,0.3); backdrop-filter: blur(10px);
+  }
+  #chord-display {
+    margin-top: 10px; background: rgba(0,0,0,0.7); padding: 10px 16px;
+    border-radius: 8px; font-size: 20px; border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.3s;
+  }
+  #chord-display.visible { opacity: 1; }
+  #building-count {
+    position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.7);
+    padding: 10px 16px; border-radius: 8px; font-size: 14px;
+    border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); z-index: 10;
+  }
+  #piano {
+    position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    display: flex; z-index: 10; pointer-events: none;
+  }
+  .pw { position: relative; width: 32px; height: 90px; }
+  .pk {
+    position: absolute; bottom: 0; border-radius: 0 0 3px 3px;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 5px; font-size: 9px; font-family: 'Courier New', monospace;
+    transition: background 0.08s;
+  }
+  .pk.w {
+    width: 30px; height: 90px; background: rgba(220,220,230,0.12);
+    border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.3); z-index: 1;
+  }
+  .pk.b {
+    width: 22px; height: 55px; background: rgba(30,30,50,0.7);
+    border: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.25);
+    z-index: 2; right: -11px; top: 0;
+  }
+  .pk.active { background: rgba(126,184,255,0.5); box-shadow: 0 0 12px rgba(126,184,255,0.4); color: #fff; }
+  .pk.b.active { background: rgba(126,184,255,0.6); }
+  #help {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 8px;
+    font-size: 11px; border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(10px); z-index: 10; color: #555; text-align: center;
+    white-space: nowrap;
+  }
+  .dim { color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="status">Keyboard ready. MIDI: scanning...</div>
+  <div id="chord-display"></div>
+</div>
+<div id="building-count"><span class="dim">Buildings:</span> <span id="count">0</span></div>
+<div id="piano"></div>
+<div id="help">Hold 3+ keys for a chord &nbsp;|&nbsp; A S D F G H J = white &nbsp;|&nbsp; W E T Y U = black &nbsp;|&nbsp; Esc = reset &nbsp;|&nbsp; Mouse = orbit</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ===================== CONSTANTS =====================
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+const KEY_TO_NOTE = {
+  'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,
+  'g':67,'y':68,'h':69,'u':70,'j':71,'k':72,'o':73,
+  'l':74,'p':75,';':76,"'":77,']':78,
+};
+
+const PIANO_LAYOUT = [
+  {n:60,k:'A',b:false},{n:61,k:'W',b:true},{n:62,k:'S',b:false},{n:63,k:'E',b:true},
+  {n:64,k:'D',b:false},{n:65,k:'F',b:false},{n:66,k:'T',b:true},{n:67,k:'G',b:false},
+  {n:68,k:'Y',b:true},{n:69,k:'H',b:false},{n:70,k:'U',b:true},{n:71,k:'J',b:false},
+  {n:72,k:'K',b:false},{n:73,k:'O',b:true},{n:74,k:'L',b:false},{n:75,k:'P',b:true},
+  {n:76,k:';',b:false},{n:77,k:"'",b:false},{n:78,k:']',b:true},
+];
+
+const CHORD_MAP = {
+  '0,3,7':'min','0,4,7':'maj','0,3,6':'dim','0,4,8':'aug',
+  '0,3,7,10':'min7','0,4,7,10':'dom7','0,4,7,11':'maj7',
+  '0,3,6,9':'dim7','0,3,7,11':'minMaj7','0,2,7':'sus2',
+  '0,5,7':'sus4','0,4,7,10,14':'dom9','0,4,7,11,14':'maj9',
+  '0,3,7,10,14':'min9','0,7':'power','0,4,7,14':'add9','0,3,7,14':'minadd9',
+};
+
+const STYLES = {
+  maj:  {hue:0.56,sat:0.50,lit:0.35,litP:0.75,met:0.6,rough:0.2},
+  min:  {hue:0.76,sat:0.40,lit:0.22,litP:0.35,met:0.2,rough:0.85},
+  dim:  {hue:0.04,sat:0.50,lit:0.22,litP:0.45,met:0.1,rough:0.9},
+  aug:  {hue:0.42,sat:0.50,lit:0.30,litP:0.60,met:0.4,rough:0.4},
+  dom7: {hue:0.10,sat:0.60,lit:0.33,litP:0.70,met:0.3,rough:0.4},
+  min7: {hue:0.72,sat:0.30,lit:0.20,litP:0.30,met:0.1,rough:0.9},
+  maj7: {hue:0.54,sat:0.30,lit:0.40,litP:0.85,met:0.7,rough:0.1},
+  dim7: {hue:0.06,sat:0.50,lit:0.20,litP:0.50,met:0.1,rough:0.9},
+  sus2: {hue:0.50,sat:0.15,lit:0.40,litP:0.25,met:0.8,rough:0.2},
+  sus4: {hue:0.08,sat:0.25,lit:0.32,litP:0.30,met:0.2,rough:0.8},
+  power:{hue:0.00,sat:0.05,lit:0.30,litP:0.25,met:0.0,rough:1.0},
+  chord:{hue:0.50,sat:0.30,lit:0.30,litP:0.50,met:0.2,rough:0.7},
+  minMaj7:{hue:0.74,sat:0.35,lit:0.25,litP:0.40,met:0.15,rough:0.85},
+  minadd9:{hue:0.73,sat:0.35,lit:0.24,litP:0.38,met:0.15,rough:0.8},
+  add9: {hue:0.45,sat:0.45,lit:0.32,litP:0.65,met:0.35,rough:0.45},
+  min9: {hue:0.75,sat:0.38,lit:0.23,litP:0.38,met:0.18,rough:0.82},
+  dom9: {hue:0.11,sat:0.55,lit:0.32,litP:0.68,met:0.28,rough:0.45},
+  maj9: {hue:0.55,sat:0.32,lit:0.38,litP:0.80,met:0.65,rough:0.15},
+};
+
+// ===================== DOM =====================
+const statusEl = document.getElementById('status');
+const chordEl = document.getElementById('chord-display');
+const countEl = document.getElementById('count');
+const pianoEl = document.getElementById('piano');
+
+// ===================== THREE.JS SCENE =====================
+let W = window.innerWidth, H = window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06061a);
+scene.fog = new THREE.FogExp2(0x06061a, 0.006);
+
+const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 800);
+camera.position.set(-20, 35, 55);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 12, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI / 2.05;
+controls.minDistance = 15;
+controls.maxDistance = 200;
+
+// Lights
+scene.add(new THREE.AmbientLight(0x1a1a3a, 1.0));
+scene.add(new THREE.HemisphereLight(0x1a1a4a, 0x111118, 0.6));
+const moonDir = new THREE.DirectionalLight(0x8899cc, 0.4);
+moonDir.position.set(60, 80, -40);
+scene.add(moonDir);
+
+// Moon sphere
+const moonMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(4, 32, 32),
+  new THREE.MeshBasicMaterial({ color: 0xfffff0 })
+);
+moonMesh.position.set(60, 80, -120);
+scene.add(moonMesh);
+const moonGlow = new THREE.PointLight(0x8899cc, 0.8, 250);
+moonGlow.position.copy(moonMesh.position);
+scene.add(moonGlow);
+
+// Stars
+const starCount = 800;
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+  starPos[i*3]   = (Math.random()-0.5) * 400;
+  starPos[i*3+1] = Math.random() * 120 + 25;
+  starPos[i*3+2] = (Math.random()-0.5) * 400;
+}
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.4, transparent: true, opacity: 0.7
+})));
+
+// Ground
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x0e0e1e, roughness: 0.92, metalness: 0.05 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.02;
+scene.add(ground);
+
+// Road
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x151525, roughness: 0.85, metalness: 0.05 });
+const road = new THREE.Mesh(new THREE.PlaneGeometry(600, 14), roadMat);
+road.rotation.x = -Math.PI / 2;
+road.position.y = -0.01;
+scene.add(road);
+// Lane lines
+const lineMat = new THREE.MeshBasicMaterial({ color: 0x333340 });
+for (let x = -200; x < 200; x += 8) {
+  const dash = new THREE.Mesh(new THREE.PlaneGeometry(4, 0.3), lineMat);
+  dash.rotation.x = -Math.PI / 2;
+  dash.position.set(x, 0, 0);
+  scene.add(dash);
+}
+
+window.addEventListener('resize', () => {
+  W = window.innerWidth; H = window.innerHeight;
+  camera.aspect = W / H;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+// ===================== CITY STATE =====================
+const buildings = [];
+const spawning = [];
+let nextX = -30;
+let nextSide = 1;
+const desiredTarget = new THREE.Vector3(0, 12, 0);
+
+// ===================== SEEDED RNG =====================
+const seededRandom = (seed) => {
+  let s = Math.abs(seed) || 1;
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+};
+
+// ===================== TEXTURE GENERATION =====================
+function makeWindowTex(floors, cols, bodyHex, litProb, rng) {
+  const sz = 256;
+  const c = document.createElement('canvas');
+  c.width = sz; c.height = sz;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = bodyHex;
+  ctx.fillRect(0, 0, sz, sz);
+
+  const cw = sz / cols, ch = sz / floors;
+  for (let r = 0; r < floors; r++) {
+    for (let ci = 0; ci < cols; ci++) {
+      const wx = ci * cw + cw * 0.18, wy = r * ch + ch * 0.12;
+      const ww = cw * 0.64, wh = ch * 0.76;
+      if (rng() < litProb) {
+        const t = rng();
+        ctx.fillStyle = t > 0.6 ? '#ffdd88' : t > 0.3 ? '#ffeebb' : '#aaccee';
+      } else {
+        ctx.fillStyle = '#08080f';
+      }
+      ctx.fillRect(wx, wy, ww, wh);
+    }
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function buildingMat(tex, style) {
+  return new THREE.MeshStandardMaterial({
+    map: tex, emissiveMap: tex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.7,
+    roughness: style.rough,
+    metalness: style.met,
+  });
+}
+
+function solidMat(color, rough = 0.7, met = 0.2) {
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: met });
+}
+
+function colorFromStyle(root, style) {
+  const hue = (style.hue + root / 12 * 0.12) % 1;
+  return new THREE.Color().setHSL(hue, style.sat, style.lit);
+}
+
+function colorToHex(c) {
+  const r = Math.floor(c.r * 255), g = Math.floor(c.g * 255), b = Math.floor(c.b * 255);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ===================== BUILDING GENERATORS =====================
+
+// Major → modern glass skyscraper
+function buildSkyscraper(p) {
+  const g = new THREE.Group();
+  const tex = makeWindowTex(Math.round(p.h/4), Math.round(p.w/3.5), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
+  const mat = buildingMat(tex, p.style);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), mat);
+  body.position.y = p.h / 2;
+  g.add(body);
+  // Helipad frame on top
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(p.w * 0.7, 0.3, p.d * 0.7),
+    solidMat(0x334455, 0.5, 0.5)
+  );
+  frame.position.y = p.h + 0.15;
+  g.add(frame);
+  return g;
+}
+
+// Minor → gothic spire
+function buildGothic(p) {
+  const g = new THREE.Group();
+  const w = p.w * 0.75;
+  const tex = makeWindowTex(Math.round(p.h/5), Math.max(2, Math.round(w/4)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, p.h, p.d * 0.8), buildingMat(tex, p.style));
+  body.position.y = p.h / 2;
+  g.add(body);
+  const spireH = p.h * 0.4;
+  const spire = new THREE.Mesh(
+    new THREE.ConeGeometry(w * 0.35, spireH, 4),
+    solidMat(p.color.clone().multiplyScalar(0.6), 0.9, 0.1)
+  );
+  spire.position.y = p.h + spireH / 2;
+  spire.rotation.y = Math.PI / 4;
+  g.add(spire);
+  return g;
+}
+
+// Diminished → industrial warehouse with smokestacks
+function buildIndustrial(p) {
+  const g = new THREE.Group();
+  const bh = p.h * 0.6;
+  const tex = makeWindowTex(Math.round(bh/5), Math.round(p.w/3), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w * 1.2, bh, p.d * 1.1), buildingMat(tex, p.style));
+  body.position.y = bh / 2;
+  g.add(body);
+  const chimneys = 2 + Math.floor(p.rng() * 2);
+  for (let i = 0; i < chimneys; i++) {
+    const ch = p.h * (0.3 + p.rng() * 0.3);
+    const cr = 0.6 + p.rng() * 0.5;
+    const chimney = new THREE.Mesh(
+      new THREE.CylinderGeometry(cr, cr * 1.1, ch, 8),
+      solidMat(p.color.clone().multiplyScalar(0.5), 0.95, 0.05)
+    );
+    chimney.position.set(
+      (p.rng() - 0.5) * p.w * 0.8,
+      bh + ch / 2,
+      (p.rng() - 0.5) * p.d * 0.6
+    );
+    g.add(chimney);
+  }
+  return g;
+}
+
+// Augmented → observatory dome
+function buildDome(p) {
+  const g = new THREE.Group();
+  const baseH = p.h * 0.65;
+  const rad = Math.max(p.w, p.d) * 0.5;
+  const tex = makeWindowTex(Math.round(baseH/4.5), Math.round(rad*2/4), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.05, baseH, 24), buildingMat(tex, p.style));
+  base.position.y = baseH / 2;
+  g.add(base);
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(rad, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+    solidMat(p.color.clone().multiplyScalar(0.8), 0.3, 0.6)
+  );
+  dome.position.y = baseH;
+  g.add(dome);
+  return g;
+}
+
+// Dom7 → art deco stepped tower
+function buildArtDeco(p) {
+  const g = new THREE.Group();
+  const tiers = 3;
+  let y = 0;
+  let tw = p.w, td = p.d;
+  for (let i = 0; i < tiers; i++) {
+    const th = p.h / tiers * (1 + (tiers - i) * 0.15);
+    const tex = makeWindowTex(Math.round(th/4.5), Math.max(2, Math.round(tw/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+    const tier = new THREE.Mesh(new THREE.BoxGeometry(tw, th, td), buildingMat(tex, p.style));
+    tier.position.y = y + th / 2;
+    g.add(tier);
+    y += th;
+    tw *= 0.72; td *= 0.72;
+  }
+  // Antenna/spire
+  const ant = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, 0.3, p.h * 0.15, 6),
+    solidMat(0xccaa55, 0.3, 0.8)
+  );
+  ant.position.y = y + p.h * 0.075;
+  g.add(ant);
+  return g;
+}
+
+// Min7 → cathedral with spire and buttresses
+function buildCathedral(p) {
+  const g = new THREE.Group();
+  const tex = makeWindowTex(Math.round(p.h/5.5), Math.max(2, Math.round(p.w/4.5)), colorToHex(p.color.clone().multiplyScalar(0.35)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
+  body.position.y = p.h / 2;
+  g.add(body);
+  // Central tall spire
+  const sH = p.h * 0.7;
+  const spire = new THREE.Mesh(
+    new THREE.ConeGeometry(p.w * 0.18, sH, 4),
+    solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05)
+  );
+  spire.position.y = p.h + sH / 2;
+  spire.rotation.y = Math.PI / 4;
+  g.add(spire);
+  // Side towers
+  for (const side of [-1, 1]) {
+    const tH = p.h * 0.35;
+    const tower = new THREE.Mesh(
+      new THREE.BoxGeometry(p.w * 0.22, tH, p.d * 0.22),
+      solidMat(p.color.clone().multiplyScalar(0.5), 0.85, 0.08)
+    );
+    tower.position.set(side * p.w * 0.45, p.h + tH / 2, 0);
+    g.add(tower);
+    const miniSpire = new THREE.Mesh(
+      new THREE.ConeGeometry(p.w * 0.1, tH * 0.5, 4),
+      solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05)
+    );
+    miniSpire.position.set(side * p.w * 0.45, p.h + tH + tH * 0.25, 0);
+    miniSpire.rotation.y = Math.PI / 4;
+    g.add(miniSpire);
+  }
+  return g;
+}
+
+// Maj7 → crystal/glass tower (octagonal)
+function buildCrystal(p) {
+  const g = new THREE.Group();
+  const rad = Math.min(p.w, p.d) * 0.45;
+  const tex = makeWindowTex(Math.round(p.h/3.5), 8, colorToHex(p.color.clone().multiplyScalar(0.55)), p.style.litP, p.rng);
+  const mat = buildingMat(tex, p.style);
+  mat.transparent = true;
+  mat.opacity = 0.88;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.02, p.h, 8), mat);
+  body.position.y = p.h / 2;
+  g.add(body);
+  // Glowing top ring
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(rad * 0.9, 0.2, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0x88ccff })
+  );
+  ring.position.y = p.h;
+  ring.rotation.x = Math.PI / 2;
+  g.add(ring);
+  // Antenna
+  const ant = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1, 0.15, p.h * 0.12, 6),
+    solidMat(0x88ccff, 0.2, 0.9)
+  );
+  ant.position.y = p.h + p.h * 0.06;
+  g.add(ant);
+  return g;
+}
+
+// Dim7 → factory with sawtooth roof
+function buildFactory(p) {
+  const g = new THREE.Group();
+  const bh = p.h * 0.55;
+  const bw = p.w * 1.3;
+  const tex = makeWindowTex(Math.round(bh/5), Math.round(bw/3), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, p.d * 1.1), buildingMat(tex, p.style));
+  body.position.y = bh / 2;
+  g.add(body);
+  // Sawtooth roof segments
+  const teeth = 3 + Math.floor(p.rng() * 2);
+  const segW = bw / teeth;
+  for (let i = 0; i < teeth; i++) {
+    const roofH = p.h * 0.18 + p.rng() * p.h * 0.08;
+    const roof = new THREE.Mesh(
+      new THREE.CylinderGeometry(segW * 0.45, segW * 0.45, p.d * 1.1, 3),
+      solidMat(p.color.clone().multiplyScalar(0.55), 0.85, 0.1)
+    );
+    roof.rotation.set(Math.PI / 2, 0, Math.PI / 6);
+    roof.position.set(-bw / 2 + segW * (i + 0.5), bh + roofH * 0.4, 0);
+    roof.scale.y = 1;
+    roof.scale.x = roofH / (segW * 0.45);
+    g.add(roof);
+  }
+  return g;
+}
+
+// Sus2 → water tower
+function buildWaterTower(p) {
+  const g = new THREE.Group();
+  const legH = p.h * 0.6;
+  const tankH = p.h * 0.35;
+  const legR = 0.4;
+  const tankR = p.w * 0.4;
+  // Four legs
+  for (let lx = -1; lx <= 1; lx += 2) {
+    for (let lz = -1; lz <= 1; lz += 2) {
+      const leg = new THREE.Mesh(
+        new THREE.CylinderGeometry(legR, legR, legH, 6),
+        solidMat(0x667788, 0.5, 0.6)
+      );
+      leg.position.set(lx * tankR * 0.55, legH / 2, lz * tankR * 0.55);
+      g.add(leg);
+    }
+  }
+  // Tank
+  const tank = new THREE.Mesh(
+    new THREE.CylinderGeometry(tankR, tankR * 0.9, tankH, 16),
+    solidMat(p.color, p.style.rough, p.style.met)
+  );
+  tank.position.y = legH + tankH / 2;
+  g.add(tank);
+  // Cone top
+  const cap = new THREE.Mesh(
+    new THREE.ConeGeometry(tankR * 0.85, tankH * 0.4, 16),
+    solidMat(p.color.clone().multiplyScalar(0.8), 0.6, 0.4)
+  );
+  cap.position.y = legH + tankH + tankH * 0.2;
+  g.add(cap);
+  return g;
+}
+
+// Sus4 → monument arch
+function buildArch(p) {
+  const g = new THREE.Group();
+  const pillarH = p.h * 0.85;
+  const pillarW = p.w * 0.25;
+  const gap = p.w * 0.6;
+  const archMat = solidMat(p.color, p.style.rough, p.style.met);
+  // Two pillars
+  for (const side of [-1, 1]) {
+    const pillar = new THREE.Mesh(
+      new THREE.BoxGeometry(pillarW, pillarH, p.d * 0.7),
+      archMat
+    );
+    pillar.position.set(side * gap / 2, pillarH / 2, 0);
+    g.add(pillar);
+  }
+  // Arch top (torus segment)
+  const archR = gap / 2;
+  const arch = new THREE.Mesh(
+    new THREE.TorusGeometry(archR, pillarW * 0.45, 8, 16, Math.PI),
+    archMat
+  );
+  arch.position.y = pillarH;
+  arch.rotation.z = 0;
+  g.add(arch);
+  // Lintel
+  const lintel = new THREE.Mesh(
+    new THREE.BoxGeometry(gap + pillarW, pillarW * 0.6, p.d * 0.7),
+    archMat
+  );
+  lintel.position.y = pillarH + archR + pillarW * 0.2;
+  g.add(lintel);
+  return g;
+}
+
+// Power → brutalist block
+function buildBrutalist(p) {
+  const g = new THREE.Group();
+  const blocks = 2 + Math.floor(p.rng() * 2);
+  for (let i = 0; i < blocks; i++) {
+    const bw = p.w * (0.6 + p.rng() * 0.5);
+    const bh = p.h * (0.5 + p.rng() * 0.5);
+    const bd = p.d * (0.6 + p.rng() * 0.5);
+    const tex = makeWindowTex(
+      Math.max(2, Math.round(bh / 6)),
+      Math.max(2, Math.round(bw / 5)),
+      colorToHex(p.color.clone().multiplyScalar(0.4 + p.rng() * 0.15)),
+      p.style.litP, p.rng
+    );
+    const block = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), buildingMat(tex, p.style));
+    block.position.set(
+      (p.rng() - 0.5) * p.w * 0.3,
+      bh / 2,
+      (p.rng() - 0.5) * p.d * 0.3
+    );
+    g.add(block);
+  }
+  return g;
+}
+
+// Generic fallback
+function buildGeneric(p) {
+  const g = new THREE.Group();
+  const tex = makeWindowTex(Math.round(p.h/4.5), Math.max(2, Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
+  body.position.y = p.h / 2;
+  g.add(body);
+  return g;
+}
+
+const GENERATORS = {
+  maj: buildSkyscraper, min: buildGothic, dim: buildIndustrial, aug: buildDome,
+  dom7: buildArtDeco, min7: buildCathedral, maj7: buildCrystal, dim7: buildFactory,
+  sus2: buildWaterTower, sus4: buildArch, power: buildBrutalist,
+  chord: buildGeneric, minMaj7: buildGothic, minadd9: buildGothic,
+  add9: buildDome, min9: buildCathedral, dom9: buildArtDeco, maj9: buildCrystal,
+};
+
+// ===================== ADD BUILDING TO CITY =====================
+function addBuilding(chord, velocity) {
+  const seed = chord.notes.reduce((a, b) => a * 31 + b, 7) + Date.now();
+  const rng = seededRandom(seed);
+  const style = STYLES[chord.type] || STYLES.chord;
+  const color = colorFromStyle(chord.root, style);
+
+  const h = 15 + (velocity / 127) * 45 + rng() * 15;
+  const w = 6 + chord.notes.length * 1.5 + rng() * 4;
+  const d = 6 + rng() * 4;
+
+  const gen = GENERATORS[chord.type] || buildGeneric;
+  const group = gen({ h, w, d, color, style, rng });
+
+  group.position.x = nextX;
+  group.position.z = nextSide * 13;
+  group.rotation.y = nextSide > 0 ? 0 : Math.PI;
+
+  group.scale.y = 0.01;
+  scene.add(group);
+  spawning.push({ group, progress: 0 });
+  buildings.push(group);
+
+  // Ground glow light
+  const glow = new THREE.PointLight(
+    color.clone().multiplyScalar(2),
+    0.4, w * 3
+  );
+  glow.position.set(nextX, h * 0.4, nextSide * 13);
+  scene.add(glow);
+
+  nextX += w + 3 + rng() * 6;
+  nextSide *= -1;
+
+  desiredTarget.x = (buildings[0].position.x + nextX) / 2;
+  desiredTarget.y = Math.min(25, h * 0.5);
+
+  countEl.textContent = buildings.length;
+}
+
+// ===================== INPUT =====================
+const heldNotes = new Map();
+let chordTimeout = null;
+const kbHeldKeys = new Set();
+const pianoKeyEls = new Map();
+
+function detectChord(notes) {
+  if (notes.length < 3) return null;
+  const sorted = [...notes].sort((a, b) => a - b);
+  const root = sorted[0] % 12;
+  const intervals = sorted.map(n => (n % 12 - root + 12) % 12).sort((a, b) => a - b);
+  const key = intervals.join(',');
+  const type = CHORD_MAP[key] || 'chord';
+  return { root, name: NOTE_NAMES[root], type, notes: sorted, intervals };
+}
+
+function tryDetectChord() {
+  const notes = [...heldNotes.keys()];
+  if (notes.length >= 3) {
+    const chord = detectChord(notes);
+    if (chord) {
+      const vels = chord.notes.map(n => heldNotes.get(n) || 80);
+      const avg = vels.reduce((a, b) => a + b, 0) / vels.length;
+      chordEl.textContent = `${chord.name} ${chord.type}`;
+      chordEl.classList.add('visible');
+      setTimeout(() => chordEl.classList.remove('visible'), 1500);
+      addBuilding(chord, avg);
+    }
+  }
+}
+
+function updatePianoUI() {
+  pianoKeyEls.forEach((el, note) => el.classList.toggle('active', heldNotes.has(note)));
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    buildings.forEach(b => scene.remove(b));
+    buildings.length = 0;
+    spawning.length = 0;
+    nextX = -30; nextSide = 1;
+    desiredTarget.set(0, 12, 0);
+    countEl.textContent = '0';
+    // Remove point lights (building glows)
+    scene.children.filter(c => c.isPointLight && c !== moonGlow).forEach(c => scene.remove(c));
+    return;
+  }
+  const key = e.key.toLowerCase();
+  if (kbHeldKeys.has(key)) return;
+  const note = KEY_TO_NOTE[key];
+  if (note == null) return;
+  e.preventDefault();
+  kbHeldKeys.add(key);
+  heldNotes.set(note, 100);
+  updatePianoUI();
+  clearTimeout(chordTimeout);
+  chordTimeout = setTimeout(tryDetectChord, 50);
+});
+
+document.addEventListener('keyup', (e) => {
+  const key = e.key.toLowerCase();
+  kbHeldKeys.delete(key);
+  const note = KEY_TO_NOTE[key];
+  if (note == null) return;
+  e.preventDefault();
+  heldNotes.delete(note);
+  updatePianoUI();
+});
+
+// MIDI
+function onMIDIMessage(e) {
+  const [status, note, velocity] = e.data;
+  const cmd = status & 0xf0;
+  if (cmd === 0x90 && velocity > 0) {
+    heldNotes.set(note, velocity);
+    updatePianoUI();
+    clearTimeout(chordTimeout);
+    chordTimeout = setTimeout(tryDetectChord, 40);
+  } else if (cmd === 0x80 || (cmd === 0x90 && velocity === 0)) {
+    heldNotes.delete(note);
+    updatePianoUI();
+  }
+}
+
+async function initMIDI() {
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const inputs = [...access.inputs.values()];
+    if (inputs.length === 0) {
+      statusEl.textContent = 'Keyboard ready. No MIDI devices found.';
+      return;
+    }
+    inputs.forEach(i => { i.onmidimessage = onMIDIMessage; });
+    statusEl.textContent = `Keyboard + MIDI: ${inputs.map(i => i.name).join(', ')}`;
+    access.onstatechange = () => {
+      const cur = [...access.inputs.values()];
+      cur.forEach(i => { i.onmidimessage = onMIDIMessage; });
+      statusEl.textContent = cur.length > 0
+        ? `Keyboard + MIDI: ${cur.map(i => i.name).join(', ')}`
+        : 'Keyboard ready. MIDI disconnected.';
+    };
+  } catch {
+    statusEl.textContent = 'Keyboard ready. MIDI not available.';
+  }
+}
+
+// ===================== PIANO UI =====================
+function buildPianoUI() {
+  pianoEl.innerHTML = '';
+  PIANO_LAYOUT.forEach(pk => {
+    if (!pk.b) {
+      const wr = document.createElement('div');
+      wr.className = 'pw';
+      const el = document.createElement('div');
+      el.className = 'pk w';
+      el.textContent = pk.k;
+      wr.appendChild(el);
+      pianoKeyEls.set(pk.n, el);
+      const nb = PIANO_LAYOUT.find(p => p.n === pk.n + 1 && p.b);
+      if (nb) {
+        const bel = document.createElement('div');
+        bel.className = 'pk b';
+        bel.textContent = nb.k;
+        bel.style.left = 'auto'; bel.style.right = '-11px';
+        wr.appendChild(bel);
+        pianoKeyEls.set(nb.n, bel);
+      }
+      pianoEl.appendChild(wr);
+    }
+  });
+}
+
+// ===================== ANIMATION =====================
+function easeOutBack(t) {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Animate spawning buildings
+  for (let i = spawning.length - 1; i >= 0; i--) {
+    const s = spawning[i];
+    s.progress = Math.min(1, s.progress + 0.018);
+    s.group.scale.y = easeOutBack(s.progress);
+    if (s.progress >= 1) spawning.splice(i, 1);
+  }
+
+  // Camera tracking
+  controls.target.lerp(desiredTarget, 0.015);
+  camera.position.x += (desiredTarget.x - camera.position.x + 20) * 0.008;
+  controls.update();
+
+  renderer.render(scene, camera);
+}
+
+// ===================== INIT =====================
+buildPianoUI();
+animate();
+initMIDI();
+
+</script>
+</body>
+</html>
