@@ -19,10 +19,11 @@
     backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.3s;
   }
   #chord-display.visible { opacity: 1; }
-  #building-count {
+  #info {
     position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.7);
-    padding: 10px 16px; border-radius: 8px; font-size: 14px;
+    padding: 10px 16px; border-radius: 8px; font-size: 13px;
     border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); z-index: 10;
+    text-align: right; line-height: 1.6;
   }
   #piano {
     position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
@@ -54,6 +55,9 @@
     white-space: nowrap;
   }
   .dim { color: #555; }
+  .algo-dla { color: #66ddee; }
+  .algo-eden { color: #66ee88; }
+  .algo-sprawl { color: #eebb66; }
 </style>
 </head>
 <body>
@@ -61,9 +65,12 @@
   <div id="status">Keyboard ready. MIDI: scanning...</div>
   <div id="chord-display"></div>
 </div>
-<div id="building-count"><span class="dim">Buildings:</span> <span id="count">0</span></div>
+<div id="info">
+  <span class="dim">Buildings:</span> <span id="count">0</span><br>
+  <span class="dim">Algorithm:</span> <span id="algo-name">—</span>
+</div>
 <div id="piano"></div>
-<div id="help">Hold 3+ keys for a chord &nbsp;|&nbsp; A S D F G H J = white &nbsp;|&nbsp; W E T Y U = black &nbsp;|&nbsp; Esc = reset &nbsp;|&nbsp; Mouse = orbit</div>
+<div id="help">Hold 3+ keys for a chord &nbsp;|&nbsp; A S D F G H J = white &nbsp;|&nbsp; W E T Y U = black &nbsp;|&nbsp; Esc = reset</div>
 
 <script type="importmap">
 { "imports": {
@@ -74,7 +81,6 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===================== CONSTANTS =====================
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -126,6 +132,7 @@ const STYLES = {
 const statusEl = document.getElementById('status');
 const chordEl = document.getElementById('chord-display');
 const countEl = document.getElementById('count');
+const algoEl = document.getElementById('algo-name');
 const pianoEl = document.getElementById('piano');
 
 // ===================== THREE.JS SCENE =====================
@@ -140,18 +147,16 @@ document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x06061a);
-scene.fog = new THREE.FogExp2(0x06061a, 0.006);
+scene.fog = new THREE.FogExp2(0x06061a, 0.0025);
 
-const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 800);
-camera.position.set(-20, 35, 55);
+// Fixed overhead camera
+const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 1000);
+camera.position.set(0, 100, 70);
+camera.lookAt(0, 0, 0);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 12, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.06;
-controls.maxPolarAngle = Math.PI / 2.05;
-controls.minDistance = 15;
-controls.maxDistance = 200;
+const desiredCamPos = new THREE.Vector3(0, 100, 70);
+const desiredCamTarget = new THREE.Vector3(0, 0, 0);
+const currentCamTarget = new THREE.Vector3(0, 0, 0);
 
 // Lights
 scene.add(new THREE.AmbientLight(0x1a1a3a, 1.0));
@@ -160,14 +165,14 @@ const moonDir = new THREE.DirectionalLight(0x8899cc, 0.4);
 moonDir.position.set(60, 80, -40);
 scene.add(moonDir);
 
-// Moon sphere
+// Moon
 const moonMesh = new THREE.Mesh(
   new THREE.SphereGeometry(4, 32, 32),
   new THREE.MeshBasicMaterial({ color: 0xfffff0 })
 );
-moonMesh.position.set(60, 80, -120);
+moonMesh.position.set(80, 90, -150);
 scene.add(moonMesh);
-const moonGlow = new THREE.PointLight(0x8899cc, 0.8, 250);
+const moonGlow = new THREE.PointLight(0x8899cc, 0.8, 300);
 moonGlow.position.copy(moonMesh.position);
 scene.add(moonGlow);
 
@@ -175,9 +180,9 @@ scene.add(moonGlow);
 const starCount = 800;
 const starPos = new Float32Array(starCount * 3);
 for (let i = 0; i < starCount; i++) {
-  starPos[i*3]   = (Math.random()-0.5) * 400;
-  starPos[i*3+1] = Math.random() * 120 + 25;
-  starPos[i*3+2] = (Math.random()-0.5) * 400;
+  starPos[i*3]   = (Math.random()-0.5) * 500;
+  starPos[i*3+1] = Math.random() * 140 + 30;
+  starPos[i*3+2] = (Math.random()-0.5) * 500;
 }
 const starGeo = new THREE.BufferGeometry();
 starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
@@ -186,26 +191,36 @@ scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
 })));
 
 // Ground
-const groundMat = new THREE.MeshStandardMaterial({ color: 0x0e0e1e, roughness: 0.92, metalness: 0.05 });
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), groundMat);
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(800, 800),
+  new THREE.MeshStandardMaterial({ color: 0x0e0e1e, roughness: 0.92, metalness: 0.05 })
+);
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.02;
 scene.add(ground);
 
-// Road
-const roadMat = new THREE.MeshStandardMaterial({ color: 0x151525, roughness: 0.85, metalness: 0.05 });
-const road = new THREE.Mesh(new THREE.PlaneGeometry(600, 14), roadMat);
-road.rotation.x = -Math.PI / 2;
-road.position.y = -0.01;
-scene.add(road);
-// Lane lines
-const lineMat = new THREE.MeshBasicMaterial({ color: 0x333340 });
-for (let x = -200; x < 200; x += 8) {
-  const dash = new THREE.Mesh(new THREE.PlaneGeometry(4, 0.3), lineMat);
-  dash.rotation.x = -Math.PI / 2;
-  dash.position.set(x, 0, 0);
-  scene.add(dash);
+// Subtle ground grid
+const gridLineMat = new THREE.LineBasicMaterial({ color: 0x14142a, transparent: true, opacity: 0.5 });
+const GRID_SIZE = 80;
+const CELL_SIZE = 9;
+const HALF_GRID = Math.floor(GRID_SIZE / 2);
+
+function addGridLines() {
+  const extent = 25; // show grid lines for inner portion
+  for (let i = -extent; i <= extent; i++) {
+    const p = i * CELL_SIZE;
+    const len = extent * CELL_SIZE;
+    const xGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-len, 0.01, p), new THREE.Vector3(len, 0.01, p)
+    ]);
+    scene.add(new THREE.Line(xGeo, gridLineMat));
+    const zGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(p, 0.01, -len), new THREE.Vector3(p, 0.01, len)
+    ]);
+    scene.add(new THREE.Line(zGeo, gridLineMat));
+  }
 }
+addGridLines();
 
 window.addEventListener('resize', () => {
   W = window.innerWidth; H = window.innerHeight;
@@ -214,12 +229,138 @@ window.addEventListener('resize', () => {
   renderer.setSize(W, H);
 });
 
-// ===================== CITY STATE =====================
-const buildings = [];
+// ===================== GRID & PLACEMENT STATE =====================
+const grid = new Set(); // "gx,gz" keys for occupied cells
+const buildings = [];   // THREE.Group references
+const glowLights = [];  // PointLight references for cleanup
 const spawning = [];
-let nextX = -30;
-let nextSide = 1;
-const desiredTarget = new THREE.Vector3(0, 12, 0);
+
+function gridToWorld(gx, gz) {
+  return { x: (gx - HALF_GRID) * CELL_SIZE, z: (gz - HALF_GRID) * CELL_SIZE };
+}
+
+const DIRS = [[0,1],[0,-1],[1,0],[-1,0]];
+
+function inBounds(x, z) {
+  return x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE;
+}
+
+function key(x, z) { return `${x},${z}`; }
+
+// ===================== DLA =====================
+function placeDLA(rng) {
+  // Collect empty edge cells
+  const edges = [];
+  for (let i = 0; i < GRID_SIZE; i++) {
+    if (!grid.has(key(0, i))) edges.push([0, i]);
+    if (!grid.has(key(GRID_SIZE-1, i))) edges.push([GRID_SIZE-1, i]);
+    if (!grid.has(key(i, 0))) edges.push([i, 0]);
+    if (!grid.has(key(i, GRID_SIZE-1))) edges.push([i, GRID_SIZE-1]);
+  }
+  if (edges.length === 0) return placeEden(rng);
+
+  let [px, pz] = edges[Math.floor(rng() * edges.length)];
+
+  for (let step = 0; step < 3000; step++) {
+    const [dx, dz] = DIRS[Math.floor(rng() * 4)];
+    const nx = px + dx, nz = pz + dz;
+
+    // Out of bounds → bounce (skip this step)
+    if (!inBounds(nx, nz)) continue;
+
+    // Next cell occupied → stick at current position
+    if (grid.has(key(nx, nz))) {
+      grid.add(key(px, pz));
+      return { gx: px, gz: pz, algo: 'DLA' };
+    }
+
+    // Move to empty cell
+    px = nx; pz = nz;
+  }
+
+  // Gave up after 3000 steps → fallback to Eden
+  return placeEden(rng);
+}
+
+// ===================== EDEN =====================
+function placeEden(rng) {
+  // Build frontier: every empty cell with ≥1 placed neighbor
+  const seen = new Set();
+  const frontier = [];
+
+  for (const k of grid) {
+    const [x, z] = k.split(',').map(Number);
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz;
+      const nk = key(nx, nz);
+      if (inBounds(nx, nz) && !grid.has(nk) && !seen.has(nk)) {
+        seen.add(nk);
+        frontier.push({ gx: nx, gz: nz });
+      }
+    }
+  }
+
+  if (frontier.length === 0) return null;
+
+  // Pick one at uniform random
+  const pick = frontier[Math.floor(rng() * frontier.length)];
+  grid.add(key(pick.gx, pick.gz));
+  return { ...pick, algo: 'Eden' };
+}
+
+// ===================== WEIGHTED SPRAWL =====================
+function placeSprawl(rng) {
+  // Build frontier with neighbor counts
+  const frontierMap = new Map(); // "x,z" → neighbor count
+
+  for (const k of grid) {
+    const [x, z] = k.split(',').map(Number);
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz;
+      const nk = key(nx, nz);
+      if (inBounds(nx, nz) && !grid.has(nk)) {
+        frontierMap.set(nk, (frontierMap.get(nk) || 0) + 1);
+      }
+    }
+  }
+
+  if (frontierMap.size === 0) return null;
+
+  // Score by neighbor count, weight = count^2 (denser fills gaps first)
+  const entries = [...frontierMap.entries()];
+  const weights = entries.map(([, count]) => count * count);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+  let r = rng() * totalWeight;
+  for (let i = 0; i < entries.length; i++) {
+    r -= weights[i];
+    if (r <= 0) {
+      const [gx, gz] = entries[i][0].split(',').map(Number);
+      grid.add(key(gx, gz));
+      return { gx, gz, algo: 'Sprawl' };
+    }
+  }
+
+  // Numerical fallback
+  const [gx, gz] = entries[entries.length - 1][0].split(',').map(Number);
+  grid.add(key(gx, gz));
+  return { gx, gz, algo: 'Sprawl' };
+}
+
+// ===================== PLACEMENT ROUTER =====================
+function findPlacement(rng) {
+  if (grid.size === 0) {
+    // First building at center
+    grid.add(key(HALF_GRID, HALF_GRID));
+    return { gx: HALF_GRID, gz: HALF_GRID, algo: 'Seed' };
+  }
+
+  // Randomly pick algorithm
+  const roll = rng();
+  if (roll < 0.33) return placeDLA(rng);
+  if (roll < 0.66) return placeEden(rng);
+  return placeSprawl(rng);
+}
 
 // ===================== SEEDED RNG =====================
 const seededRandom = (seed) => {
@@ -235,7 +376,6 @@ function makeWindowTex(floors, cols, bodyHex, litProb, rng) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = bodyHex;
   ctx.fillRect(0, 0, sz, sz);
-
   const cw = sz / cols, ch = sz / floors;
   for (let r = 0; r < floors; r++) {
     for (let ci = 0; ci < cols; ci++) {
@@ -258,8 +398,7 @@ function buildingMat(tex, style) {
     map: tex, emissiveMap: tex,
     emissive: new THREE.Color(0xffffff),
     emissiveIntensity: 0.7,
-    roughness: style.rough,
-    metalness: style.met,
+    roughness: style.rough, metalness: style.met,
   });
 }
 
@@ -268,314 +407,205 @@ function solidMat(color, rough = 0.7, met = 0.2) {
 }
 
 function colorFromStyle(root, style) {
-  const hue = (style.hue + root / 12 * 0.12) % 1;
-  return new THREE.Color().setHSL(hue, style.sat, style.lit);
+  return new THREE.Color().setHSL((style.hue + root / 12 * 0.12) % 1, style.sat, style.lit);
 }
 
 function colorToHex(c) {
-  const r = Math.floor(c.r * 255), g = Math.floor(c.g * 255), b = Math.floor(c.b * 255);
-  return `rgb(${r},${g},${b})`;
+  return `rgb(${Math.floor(c.r*255)},${Math.floor(c.g*255)},${Math.floor(c.b*255)})`;
 }
 
 // ===================== BUILDING GENERATORS =====================
 
-// Major → modern glass skyscraper
 function buildSkyscraper(p) {
   const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/4), Math.round(p.w/3.5), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
-  const mat = buildingMat(tex, p.style);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), mat);
+  const tex = makeWindowTex(Math.round(p.h/4), Math.max(2,Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
   body.position.y = p.h / 2;
   g.add(body);
-  // Helipad frame on top
-  const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(p.w * 0.7, 0.3, p.d * 0.7),
-    solidMat(0x334455, 0.5, 0.5)
-  );
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(p.w*0.7, 0.3, p.d*0.7), solidMat(0x334455, 0.5, 0.5));
   frame.position.y = p.h + 0.15;
   g.add(frame);
   return g;
 }
 
-// Minor → gothic spire
 function buildGothic(p) {
   const g = new THREE.Group();
   const w = p.w * 0.75;
-  const tex = makeWindowTex(Math.round(p.h/5), Math.max(2, Math.round(w/4)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, p.h, p.d * 0.8), buildingMat(tex, p.style));
+  const tex = makeWindowTex(Math.round(p.h/5), Math.max(2,Math.round(w/4)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, p.h, p.d*0.8), buildingMat(tex, p.style));
   body.position.y = p.h / 2;
   g.add(body);
-  const spireH = p.h * 0.4;
-  const spire = new THREE.Mesh(
-    new THREE.ConeGeometry(w * 0.35, spireH, 4),
-    solidMat(p.color.clone().multiplyScalar(0.6), 0.9, 0.1)
-  );
-  spire.position.y = p.h + spireH / 2;
+  const sH = p.h * 0.4;
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(w*0.35, sH, 4), solidMat(p.color.clone().multiplyScalar(0.6), 0.9, 0.1));
+  spire.position.y = p.h + sH / 2;
   spire.rotation.y = Math.PI / 4;
   g.add(spire);
   return g;
 }
 
-// Diminished → industrial warehouse with smokestacks
 function buildIndustrial(p) {
   const g = new THREE.Group();
   const bh = p.h * 0.6;
-  const tex = makeWindowTex(Math.round(bh/5), Math.round(p.w/3), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w * 1.2, bh, p.d * 1.1), buildingMat(tex, p.style));
+  const tex = makeWindowTex(Math.round(bh/5), Math.max(2,Math.round(p.w/3)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w*1.1, bh, p.d*1.05), buildingMat(tex, p.style));
   body.position.y = bh / 2;
   g.add(body);
   const chimneys = 2 + Math.floor(p.rng() * 2);
   for (let i = 0; i < chimneys; i++) {
     const ch = p.h * (0.3 + p.rng() * 0.3);
-    const cr = 0.6 + p.rng() * 0.5;
-    const chimney = new THREE.Mesh(
-      new THREE.CylinderGeometry(cr, cr * 1.1, ch, 8),
-      solidMat(p.color.clone().multiplyScalar(0.5), 0.95, 0.05)
-    );
-    chimney.position.set(
-      (p.rng() - 0.5) * p.w * 0.8,
-      bh + ch / 2,
-      (p.rng() - 0.5) * p.d * 0.6
-    );
+    const cr = 0.5 + p.rng() * 0.4;
+    const chimney = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr*1.1, ch, 8), solidMat(p.color.clone().multiplyScalar(0.5), 0.95, 0.05));
+    chimney.position.set((p.rng()-0.5)*p.w*0.6, bh + ch/2, (p.rng()-0.5)*p.d*0.5);
     g.add(chimney);
   }
   return g;
 }
 
-// Augmented → observatory dome
 function buildDome(p) {
   const g = new THREE.Group();
   const baseH = p.h * 0.65;
-  const rad = Math.max(p.w, p.d) * 0.5;
-  const tex = makeWindowTex(Math.round(baseH/4.5), Math.round(rad*2/4), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.05, baseH, 24), buildingMat(tex, p.style));
+  const rad = Math.min(p.w, p.d) * 0.48;
+  const tex = makeWindowTex(Math.round(baseH/4.5), Math.max(2,Math.round(rad*2/4)), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad*1.05, baseH, 20), buildingMat(tex, p.style));
   base.position.y = baseH / 2;
   g.add(base);
-  const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(rad, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2),
-    solidMat(p.color.clone().multiplyScalar(0.8), 0.3, 0.6)
-  );
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(rad, 20, 12, 0, Math.PI*2, 0, Math.PI/2), solidMat(p.color.clone().multiplyScalar(0.8), 0.3, 0.6));
   dome.position.y = baseH;
   g.add(dome);
   return g;
 }
 
-// Dom7 → art deco stepped tower
 function buildArtDeco(p) {
   const g = new THREE.Group();
-  const tiers = 3;
-  let y = 0;
-  let tw = p.w, td = p.d;
-  for (let i = 0; i < tiers; i++) {
-    const th = p.h / tiers * (1 + (tiers - i) * 0.15);
-    const tex = makeWindowTex(Math.round(th/4.5), Math.max(2, Math.round(tw/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+  let y = 0, tw = p.w, td = p.d;
+  for (let i = 0; i < 3; i++) {
+    const th = p.h / 3 * (1 + (3-i)*0.15);
+    const tex = makeWindowTex(Math.round(th/4.5), Math.max(2,Math.round(tw/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
     const tier = new THREE.Mesh(new THREE.BoxGeometry(tw, th, td), buildingMat(tex, p.style));
     tier.position.y = y + th / 2;
     g.add(tier);
-    y += th;
-    tw *= 0.72; td *= 0.72;
+    y += th; tw *= 0.72; td *= 0.72;
   }
-  // Antenna/spire
-  const ant = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, 0.3, p.h * 0.15, 6),
-    solidMat(0xccaa55, 0.3, 0.8)
-  );
+  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.3, p.h*0.15, 6), solidMat(0xccaa55, 0.3, 0.8));
   ant.position.y = y + p.h * 0.075;
   g.add(ant);
   return g;
 }
 
-// Min7 → cathedral with spire and buttresses
 function buildCathedral(p) {
   const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/5.5), Math.max(2, Math.round(p.w/4.5)), colorToHex(p.color.clone().multiplyScalar(0.35)), p.style.litP, p.rng);
+  const tex = makeWindowTex(Math.round(p.h/5.5), Math.max(2,Math.round(p.w/4.5)), colorToHex(p.color.clone().multiplyScalar(0.35)), p.style.litP, p.rng);
   const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
   body.position.y = p.h / 2;
   g.add(body);
-  // Central tall spire
-  const sH = p.h * 0.7;
-  const spire = new THREE.Mesh(
-    new THREE.ConeGeometry(p.w * 0.18, sH, 4),
-    solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05)
-  );
-  spire.position.y = p.h + sH / 2;
-  spire.rotation.y = Math.PI / 4;
+  const sH = p.h * 0.6;
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(p.w*0.16, sH, 4), solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05));
+  spire.position.y = p.h + sH/2;
+  spire.rotation.y = Math.PI/4;
   g.add(spire);
-  // Side towers
   for (const side of [-1, 1]) {
-    const tH = p.h * 0.35;
-    const tower = new THREE.Mesh(
-      new THREE.BoxGeometry(p.w * 0.22, tH, p.d * 0.22),
-      solidMat(p.color.clone().multiplyScalar(0.5), 0.85, 0.08)
-    );
-    tower.position.set(side * p.w * 0.45, p.h + tH / 2, 0);
+    const tH = p.h * 0.3;
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(p.w*0.2, tH, p.d*0.2), solidMat(p.color.clone().multiplyScalar(0.5), 0.85, 0.08));
+    tower.position.set(side * p.w*0.42, p.h + tH/2, 0);
     g.add(tower);
-    const miniSpire = new THREE.Mesh(
-      new THREE.ConeGeometry(p.w * 0.1, tH * 0.5, 4),
-      solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05)
-    );
-    miniSpire.position.set(side * p.w * 0.45, p.h + tH + tH * 0.25, 0);
-    miniSpire.rotation.y = Math.PI / 4;
-    g.add(miniSpire);
+    const ms = new THREE.Mesh(new THREE.ConeGeometry(p.w*0.09, tH*0.5, 4), solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05));
+    ms.position.set(side * p.w*0.42, p.h + tH + tH*0.25, 0);
+    ms.rotation.y = Math.PI/4;
+    g.add(ms);
   }
   return g;
 }
 
-// Maj7 → crystal/glass tower (octagonal)
 function buildCrystal(p) {
   const g = new THREE.Group();
-  const rad = Math.min(p.w, p.d) * 0.45;
+  const rad = Math.min(p.w, p.d) * 0.4;
   const tex = makeWindowTex(Math.round(p.h/3.5), 8, colorToHex(p.color.clone().multiplyScalar(0.55)), p.style.litP, p.rng);
   const mat = buildingMat(tex, p.style);
-  mat.transparent = true;
-  mat.opacity = 0.88;
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.02, p.h, 8), mat);
+  mat.transparent = true; mat.opacity = 0.88;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad*1.02, p.h, 8), mat);
   body.position.y = p.h / 2;
   g.add(body);
-  // Glowing top ring
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(rad * 0.9, 0.2, 8, 8),
-    new THREE.MeshBasicMaterial({ color: 0x88ccff })
-  );
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(rad*0.9, 0.2, 8, 8), new THREE.MeshBasicMaterial({ color: 0x88ccff }));
   ring.position.y = p.h;
   ring.rotation.x = Math.PI / 2;
   g.add(ring);
-  // Antenna
-  const ant = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.1, 0.15, p.h * 0.12, 6),
-    solidMat(0x88ccff, 0.2, 0.9)
-  );
-  ant.position.y = p.h + p.h * 0.06;
-  g.add(ant);
   return g;
 }
 
-// Dim7 → factory with sawtooth roof
 function buildFactory(p) {
   const g = new THREE.Group();
-  const bh = p.h * 0.55;
-  const bw = p.w * 1.3;
-  const tex = makeWindowTex(Math.round(bh/5), Math.round(bw/3), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, p.d * 1.1), buildingMat(tex, p.style));
+  const bh = p.h * 0.55, bw = p.w * 1.15;
+  const tex = makeWindowTex(Math.round(bh/5), Math.max(2,Math.round(bw/3)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, p.d*1.05), buildingMat(tex, p.style));
   body.position.y = bh / 2;
   g.add(body);
-  // Sawtooth roof segments
   const teeth = 3 + Math.floor(p.rng() * 2);
   const segW = bw / teeth;
   for (let i = 0; i < teeth; i++) {
-    const roofH = p.h * 0.18 + p.rng() * p.h * 0.08;
-    const roof = new THREE.Mesh(
-      new THREE.CylinderGeometry(segW * 0.45, segW * 0.45, p.d * 1.1, 3),
-      solidMat(p.color.clone().multiplyScalar(0.55), 0.85, 0.1)
-    );
-    roof.rotation.set(Math.PI / 2, 0, Math.PI / 6);
-    roof.position.set(-bw / 2 + segW * (i + 0.5), bh + roofH * 0.4, 0);
-    roof.scale.y = 1;
-    roof.scale.x = roofH / (segW * 0.45);
+    const rH = p.h * 0.15 + p.rng() * p.h * 0.08;
+    const roof = new THREE.Mesh(new THREE.CylinderGeometry(segW*0.4, segW*0.4, p.d*1.05, 3), solidMat(p.color.clone().multiplyScalar(0.55), 0.85, 0.1));
+    roof.rotation.set(Math.PI/2, 0, Math.PI/6);
+    roof.position.set(-bw/2 + segW*(i+0.5), bh + rH*0.35, 0);
+    roof.scale.x = rH / (segW * 0.4);
     g.add(roof);
   }
   return g;
 }
 
-// Sus2 → water tower
 function buildWaterTower(p) {
   const g = new THREE.Group();
-  const legH = p.h * 0.6;
-  const tankH = p.h * 0.35;
-  const legR = 0.4;
-  const tankR = p.w * 0.4;
-  // Four legs
+  const legH = p.h * 0.6, tankH = p.h * 0.35, legR = 0.35, tankR = Math.min(p.w, p.d) * 0.35;
   for (let lx = -1; lx <= 1; lx += 2) {
     for (let lz = -1; lz <= 1; lz += 2) {
-      const leg = new THREE.Mesh(
-        new THREE.CylinderGeometry(legR, legR, legH, 6),
-        solidMat(0x667788, 0.5, 0.6)
-      );
-      leg.position.set(lx * tankR * 0.55, legH / 2, lz * tankR * 0.55);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(legR, legR, legH, 6), solidMat(0x667788, 0.5, 0.6));
+      leg.position.set(lx * tankR*0.55, legH/2, lz * tankR*0.55);
       g.add(leg);
     }
   }
-  // Tank
-  const tank = new THREE.Mesh(
-    new THREE.CylinderGeometry(tankR, tankR * 0.9, tankH, 16),
-    solidMat(p.color, p.style.rough, p.style.met)
-  );
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(tankR, tankR*0.9, tankH, 16), solidMat(p.color, p.style.rough, p.style.met));
   tank.position.y = legH + tankH / 2;
   g.add(tank);
-  // Cone top
-  const cap = new THREE.Mesh(
-    new THREE.ConeGeometry(tankR * 0.85, tankH * 0.4, 16),
-    solidMat(p.color.clone().multiplyScalar(0.8), 0.6, 0.4)
-  );
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(tankR*0.85, tankH*0.4, 16), solidMat(p.color.clone().multiplyScalar(0.8), 0.6, 0.4));
   cap.position.y = legH + tankH + tankH * 0.2;
   g.add(cap);
   return g;
 }
 
-// Sus4 → monument arch
 function buildArch(p) {
   const g = new THREE.Group();
-  const pillarH = p.h * 0.85;
-  const pillarW = p.w * 0.25;
-  const gap = p.w * 0.6;
-  const archMat = solidMat(p.color, p.style.rough, p.style.met);
-  // Two pillars
-  for (const side of [-1, 1]) {
-    const pillar = new THREE.Mesh(
-      new THREE.BoxGeometry(pillarW, pillarH, p.d * 0.7),
-      archMat
-    );
-    pillar.position.set(side * gap / 2, pillarH / 2, 0);
+  const pH = p.h * 0.85, pW = p.w * 0.22, gap = p.w * 0.5;
+  const am = solidMat(p.color, p.style.rough, p.style.met);
+  for (const s of [-1, 1]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(pW, pH, p.d*0.6), am);
+    pillar.position.set(s * gap/2, pH/2, 0);
     g.add(pillar);
   }
-  // Arch top (torus segment)
-  const archR = gap / 2;
-  const arch = new THREE.Mesh(
-    new THREE.TorusGeometry(archR, pillarW * 0.45, 8, 16, Math.PI),
-    archMat
-  );
-  arch.position.y = pillarH;
-  arch.rotation.z = 0;
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(gap/2, pW*0.4, 8, 16, Math.PI), am);
+  arch.position.y = pH;
   g.add(arch);
-  // Lintel
-  const lintel = new THREE.Mesh(
-    new THREE.BoxGeometry(gap + pillarW, pillarW * 0.6, p.d * 0.7),
-    archMat
-  );
-  lintel.position.y = pillarH + archR + pillarW * 0.2;
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(gap + pW, pW*0.5, p.d*0.6), am);
+  lintel.position.y = pH + gap/2 + pW*0.15;
   g.add(lintel);
   return g;
 }
 
-// Power → brutalist block
 function buildBrutalist(p) {
   const g = new THREE.Group();
   const blocks = 2 + Math.floor(p.rng() * 2);
   for (let i = 0; i < blocks; i++) {
-    const bw = p.w * (0.6 + p.rng() * 0.5);
-    const bh = p.h * (0.5 + p.rng() * 0.5);
-    const bd = p.d * (0.6 + p.rng() * 0.5);
-    const tex = makeWindowTex(
-      Math.max(2, Math.round(bh / 6)),
-      Math.max(2, Math.round(bw / 5)),
-      colorToHex(p.color.clone().multiplyScalar(0.4 + p.rng() * 0.15)),
-      p.style.litP, p.rng
-    );
+    const bw = p.w*(0.5+p.rng()*0.5), bh = p.h*(0.4+p.rng()*0.5), bd = p.d*(0.5+p.rng()*0.5);
+    const tex = makeWindowTex(Math.max(2,Math.round(bh/6)), Math.max(2,Math.round(bw/5)),
+      colorToHex(p.color.clone().multiplyScalar(0.4+p.rng()*0.15)), p.style.litP, p.rng);
     const block = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), buildingMat(tex, p.style));
-    block.position.set(
-      (p.rng() - 0.5) * p.w * 0.3,
-      bh / 2,
-      (p.rng() - 0.5) * p.d * 0.3
-    );
+    block.position.set((p.rng()-0.5)*p.w*0.25, bh/2, (p.rng()-0.5)*p.d*0.25);
     g.add(block);
   }
   return g;
 }
 
-// Generic fallback
 function buildGeneric(p) {
   const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/4.5), Math.max(2, Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
+  const tex = makeWindowTex(Math.round(p.h/4.5), Math.max(2,Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
   const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
   body.position.y = p.h / 2;
   g.add(body);
@@ -590,44 +620,80 @@ const GENERATORS = {
   add9: buildDome, min9: buildCathedral, dom9: buildArtDeco, maj9: buildCrystal,
 };
 
-// ===================== ADD BUILDING TO CITY =====================
+// ===================== CAMERA TRACKING =====================
+function updateCamera() {
+  if (buildings.length === 0) {
+    desiredCamPos.set(0, 100, 70);
+    desiredCamTarget.set(0, 0, 0);
+    return;
+  }
+
+  let cx = 0, cz = 0;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+
+  for (const b of buildings) {
+    cx += b.position.x; cz += b.position.z;
+    minX = Math.min(minX, b.position.x);
+    maxX = Math.max(maxX, b.position.x);
+    minZ = Math.min(minZ, b.position.z);
+    maxZ = Math.max(maxZ, b.position.z);
+  }
+
+  cx /= buildings.length;
+  cz /= buildings.length;
+
+  const extent = Math.max(maxX - minX, maxZ - minZ, 30) + 50;
+  const camH = extent * 0.85 + 40;
+  const camForward = extent * 0.55 + 25;
+
+  desiredCamPos.set(cx, camH, cz + camForward);
+  desiredCamTarget.set(cx, 0, cz);
+}
+
+// ===================== ADD BUILDING =====================
 function addBuilding(chord, velocity) {
   const seed = chord.notes.reduce((a, b) => a * 31 + b, 7) + Date.now();
   const rng = seededRandom(seed);
   const style = STYLES[chord.type] || STYLES.chord;
   const color = colorFromStyle(chord.root, style);
 
-  const h = 15 + (velocity / 127) * 45 + rng() * 15;
-  const w = 6 + chord.notes.length * 1.5 + rng() * 4;
-  const d = 6 + rng() * 4;
+  // Find grid placement via DLA/Eden/Sprawl
+  const placement = findPlacement(rng);
+  if (!placement) return; // grid full
+
+  const { gx, gz, algo } = placement;
+  const world = gridToWorld(gx, gz);
+
+  // Building params - fit within cell
+  const maxFoot = CELL_SIZE * 0.85;
+  const h = 12 + (velocity / 127) * 40 + rng() * 12;
+  const w = Math.min(maxFoot, 5 + chord.notes.length * 1.2 + rng() * 3);
+  const d = Math.min(maxFoot, 5 + rng() * 3);
 
   const gen = GENERATORS[chord.type] || buildGeneric;
   const group = gen({ h, w, d, color, style, rng });
 
-  group.position.x = nextX;
-  group.position.z = nextSide * 13;
-  group.rotation.y = nextSide > 0 ? 0 : Math.PI;
+  group.position.set(world.x, 0, world.z);
+  group.rotation.y = rng() * Math.PI * 2; // random facing
 
   group.scale.y = 0.01;
   scene.add(group);
   spawning.push({ group, progress: 0 });
   buildings.push(group);
 
-  // Ground glow light
-  const glow = new THREE.PointLight(
-    color.clone().multiplyScalar(2),
-    0.4, w * 3
-  );
-  glow.position.set(nextX, h * 0.4, nextSide * 13);
+  // Ground glow
+  const glow = new THREE.PointLight(color.clone().multiplyScalar(2), 0.35, w * 3);
+  glow.position.set(world.x, h * 0.35, world.z);
   scene.add(glow);
+  glowLights.push(glow);
 
-  nextX += w + 3 + rng() * 6;
-  nextSide *= -1;
-
-  desiredTarget.x = (buildings[0].position.x + nextX) / 2;
-  desiredTarget.y = Math.min(25, h * 0.5);
-
+  // Update UI
   countEl.textContent = buildings.length;
+  const algoClass = algo === 'DLA' ? 'algo-dla' : algo === 'Eden' ? 'algo-eden' : algo === 'Sprawl' ? 'algo-sprawl' : 'dim';
+  algoEl.className = algoClass;
+  algoEl.textContent = algo;
+
+  updateCamera();
 }
 
 // ===================== INPUT =====================
@@ -641,8 +707,7 @@ function detectChord(notes) {
   const sorted = [...notes].sort((a, b) => a - b);
   const root = sorted[0] % 12;
   const intervals = sorted.map(n => (n % 12 - root + 12) % 12).sort((a, b) => a - b);
-  const key = intervals.join(',');
-  const type = CHORD_MAP[key] || 'chord';
+  const type = CHORD_MAP[intervals.join(',')] || 'chord';
   return { root, name: NOTE_NAMES[root], type, notes: sorted, intervals };
 }
 
@@ -665,24 +730,28 @@ function updatePianoUI() {
   pianoKeyEls.forEach((el, note) => el.classList.toggle('active', heldNotes.has(note)));
 }
 
+function resetCity() {
+  buildings.forEach(b => scene.remove(b));
+  glowLights.forEach(l => scene.remove(l));
+  buildings.length = 0;
+  glowLights.length = 0;
+  spawning.length = 0;
+  grid.clear();
+  countEl.textContent = '0';
+  algoEl.textContent = '—';
+  algoEl.className = 'dim';
+  desiredCamPos.set(0, 100, 70);
+  desiredCamTarget.set(0, 0, 0);
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    buildings.forEach(b => scene.remove(b));
-    buildings.length = 0;
-    spawning.length = 0;
-    nextX = -30; nextSide = 1;
-    desiredTarget.set(0, 12, 0);
-    countEl.textContent = '0';
-    // Remove point lights (building glows)
-    scene.children.filter(c => c.isPointLight && c !== moonGlow).forEach(c => scene.remove(c));
-    return;
-  }
-  const key = e.key.toLowerCase();
-  if (kbHeldKeys.has(key)) return;
-  const note = KEY_TO_NOTE[key];
+  if (e.key === 'Escape') { resetCity(); return; }
+  const k = e.key.toLowerCase();
+  if (kbHeldKeys.has(k)) return;
+  const note = KEY_TO_NOTE[k];
   if (note == null) return;
   e.preventDefault();
-  kbHeldKeys.add(key);
+  kbHeldKeys.add(k);
   heldNotes.set(note, 100);
   updatePianoUI();
   clearTimeout(chordTimeout);
@@ -690,16 +759,15 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keyup', (e) => {
-  const key = e.key.toLowerCase();
-  kbHeldKeys.delete(key);
-  const note = KEY_TO_NOTE[key];
+  const k = e.key.toLowerCase();
+  kbHeldKeys.delete(k);
+  const note = KEY_TO_NOTE[k];
   if (note == null) return;
   e.preventDefault();
   heldNotes.delete(note);
   updatePianoUI();
 });
 
-// MIDI
 function onMIDIMessage(e) {
   const [status, note, velocity] = e.data;
   const cmd = status & 0xf0;
@@ -718,10 +786,7 @@ async function initMIDI() {
   try {
     const access = await navigator.requestMIDIAccess();
     const inputs = [...access.inputs.values()];
-    if (inputs.length === 0) {
-      statusEl.textContent = 'Keyboard ready. No MIDI devices found.';
-      return;
-    }
+    if (inputs.length === 0) { statusEl.textContent = 'Keyboard ready. No MIDI devices found.'; return; }
     inputs.forEach(i => { i.onmidimessage = onMIDIMessage; });
     statusEl.textContent = `Keyboard + MIDI: ${inputs.map(i => i.name).join(', ')}`;
     access.onstatechange = () => {
@@ -731,9 +796,7 @@ async function initMIDI() {
         ? `Keyboard + MIDI: ${cur.map(i => i.name).join(', ')}`
         : 'Keyboard ready. MIDI disconnected.';
     };
-  } catch {
-    statusEl.textContent = 'Keyboard ready. MIDI not available.';
-  }
+  } catch { statusEl.textContent = 'Keyboard ready. MIDI not available.'; }
 }
 
 // ===================== PIANO UI =====================
@@ -771,18 +834,18 @@ function easeOutBack(t) {
 function animate() {
   requestAnimationFrame(animate);
 
-  // Animate spawning buildings
+  // Spawn animation
   for (let i = spawning.length - 1; i >= 0; i--) {
     const s = spawning[i];
-    s.progress = Math.min(1, s.progress + 0.018);
+    s.progress = Math.min(1, s.progress + 0.02);
     s.group.scale.y = easeOutBack(s.progress);
     if (s.progress >= 1) spawning.splice(i, 1);
   }
 
-  // Camera tracking
-  controls.target.lerp(desiredTarget, 0.015);
-  camera.position.x += (desiredTarget.x - camera.position.x + 20) * 0.008;
-  controls.update();
+  // Fixed camera tracking
+  camera.position.lerp(desiredCamPos, 0.018);
+  currentCamTarget.lerp(desiredCamTarget, 0.018);
+  camera.lookAt(currentCamTarget);
 
   renderer.render(scene, camera);
 }
