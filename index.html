@@ -107,27 +107,6 @@ const CHORD_MAP = {
   '0,3,7,10,14':'min9','0,7':'power','0,4,7,14':'add9','0,3,7,14':'minadd9',
 };
 
-const STYLES = {
-  maj:  {hue:0.56,sat:0.50,lit:0.35,litP:0.75,met:0.6,rough:0.2},
-  min:  {hue:0.76,sat:0.40,lit:0.22,litP:0.35,met:0.2,rough:0.85},
-  dim:  {hue:0.04,sat:0.50,lit:0.22,litP:0.45,met:0.1,rough:0.9},
-  aug:  {hue:0.42,sat:0.50,lit:0.30,litP:0.60,met:0.4,rough:0.4},
-  dom7: {hue:0.10,sat:0.60,lit:0.33,litP:0.70,met:0.3,rough:0.4},
-  min7: {hue:0.72,sat:0.30,lit:0.20,litP:0.30,met:0.1,rough:0.9},
-  maj7: {hue:0.54,sat:0.30,lit:0.40,litP:0.85,met:0.7,rough:0.1},
-  dim7: {hue:0.06,sat:0.50,lit:0.20,litP:0.50,met:0.1,rough:0.9},
-  sus2: {hue:0.50,sat:0.15,lit:0.40,litP:0.25,met:0.8,rough:0.2},
-  sus4: {hue:0.08,sat:0.25,lit:0.32,litP:0.30,met:0.2,rough:0.8},
-  power:{hue:0.00,sat:0.05,lit:0.30,litP:0.25,met:0.0,rough:1.0},
-  chord:{hue:0.50,sat:0.30,lit:0.30,litP:0.50,met:0.2,rough:0.7},
-  minMaj7:{hue:0.74,sat:0.35,lit:0.25,litP:0.40,met:0.15,rough:0.85},
-  minadd9:{hue:0.73,sat:0.35,lit:0.24,litP:0.38,met:0.15,rough:0.8},
-  add9: {hue:0.45,sat:0.45,lit:0.32,litP:0.65,met:0.35,rough:0.45},
-  min9: {hue:0.75,sat:0.38,lit:0.23,litP:0.38,met:0.18,rough:0.82},
-  dom9: {hue:0.11,sat:0.55,lit:0.32,litP:0.68,met:0.28,rough:0.45},
-  maj9: {hue:0.55,sat:0.32,lit:0.38,litP:0.80,met:0.65,rough:0.15},
-};
-
 // ===================== DOM =====================
 const statusEl = document.getElementById('status');
 const chordEl = document.getElementById('chord-display');
@@ -582,12 +561,14 @@ function solidMat(color, rough = 0.7, met = 0.2) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: met });
 }
 
-function colorFromStyle(root, style) {
-  return new THREE.Color().setHSL((style.hue + root/12*0.12) % 1, style.sat, style.lit);
-}
-
 function colorToHex(c) {
   return `rgb(${Math.floor(c.r*255)},${Math.floor(c.g*255)},${Math.floor(c.b*255)})`;
+}
+
+function zoneColor(palettes, root, rng) {
+  const base = new THREE.Color(palettes[Math.floor(rng() * palettes.length)]);
+  const hsl = {}; base.getHSL(hsl);
+  return new THREE.Color().setHSL((hsl.h + root / 12 * 0.12) % 1, hsl.s, hsl.l);
 }
 
 // ===================== PARTS CATALOG =====================
@@ -595,11 +576,17 @@ const FLOOR_H = 2.5;
 const CELL_FIT = CELL_SIZE * 0.8;
 
 const PARTS = {
+  // Floors
   floorBox:     new THREE.BoxGeometry(1, FLOOR_H, 1),
   floorChamfer: new THREE.CylinderGeometry(0.48, 0.5, FLOOR_H, 8),
   floorRound:   new THREE.CylinderGeometry(0.5, 0.5, FLOOR_H, 16),
+  floorWide:    new THREE.BoxGeometry(1, FLOOR_H * 0.6, 1),
+  // Mutations
   balcony:      new THREE.BoxGeometry(1.3, 0.3, 0.4),
   terrace:      new THREE.BoxGeometry(1.1, FLOOR_H * 0.5, 1.1),
+  porch:        new THREE.BoxGeometry(1.2, 0.15, 0.6),
+  shopFront:    new THREE.BoxGeometry(1, 0.6, 0.1),
+  // Details
   windowBay:    new THREE.BoxGeometry(0.15, 0.8, 0.5),
   acUnit:       new THREE.BoxGeometry(0.4, 0.3, 0.3),
   antenna:      new THREE.CylinderGeometry(0.03, 0.05, 2.5, 4),
@@ -607,169 +594,324 @@ const PARTS = {
   vine:         new THREE.BoxGeometry(0.1, 1.5, 0.6),
   awning:       new THREE.BoxGeometry(0.8, 0.05, 0.4),
   dish:         new THREE.SphereGeometry(0.25, 6, 4, 0, Math.PI),
+  chimney:      new THREE.CylinderGeometry(0.25, 0.3, 2, 6),
+  solarPanel:   new THREE.BoxGeometry(1, 0.05, 0.6),
+  archway:      new THREE.TorusGeometry(0.4, 0.08, 6, 8, Math.PI),
+  minaret:      new THREE.CylinderGeometry(0.08, 0.12, 6, 8),
+  minaretCap:   new THREE.SphereGeometry(0.18, 8, 6),
+  // Caps
   capFlat:      new THREE.BoxGeometry(1, 0.15, 1),
   capPitched:   new THREE.ConeGeometry(0.55, 1.5, 4),
   capDome:      new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+  capOnion:     new THREE.SphereGeometry(0.45, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6),
   capSpire:     new THREE.ConeGeometry(0.12, 3, 4),
   capGarden:    new THREE.BoxGeometry(1, 0.3, 1),
 };
 
-const GROWTH = {
-  maj:    { taper: 0.02, mutateBase: 0.10, organic: 0.1,  floorGeo: 'floorBox',     cap: 'capFlat' },
-  min:    { taper: 0.04, mutateBase: 0.22, organic: 0.5,  floorGeo: 'floorBox',     cap: 'capPitched' },
-  dim:    { taper: 0.01, mutateBase: 0.18, organic: 0.3,  floorGeo: 'floorBox',     cap: 'capFlat' },
-  aug:    { taper: 0.03, mutateBase: 0.15, organic: 0.2,  floorGeo: 'floorRound',   cap: 'capDome' },
-  dom7:   { taper: 0.03, mutateBase: 0.12, organic: 0.15, floorGeo: 'floorBox',     cap: 'capFlat' },
-  min7:   { taper: 0.05, mutateBase: 0.25, organic: 0.6,  floorGeo: 'floorBox',     cap: 'capSpire' },
-  maj7:   { taper: 0.02, mutateBase: 0.08, organic: 0.1,  floorGeo: 'floorChamfer', cap: 'capDome' },
-  dim7:   { taper: 0.01, mutateBase: 0.20, organic: 0.4,  floorGeo: 'floorBox',     cap: 'capFlat' },
-  sus2:   { taper: 0.03, mutateBase: 0.14, organic: 0.2,  floorGeo: 'floorRound',   cap: 'capFlat' },
-  sus4:   { taper: 0.02, mutateBase: 0.12, organic: 0.15, floorGeo: 'floorBox',     cap: 'capPitched' },
-  power:  { taper: 0.00, mutateBase: 0.06, organic: 0.05, floorGeo: 'floorBox',     cap: 'capFlat' },
-  chord:  { taper: 0.02, mutateBase: 0.15, organic: 0.3,  floorGeo: 'floorBox',     cap: 'capFlat' },
-  minMaj7:{ taper: 0.04, mutateBase: 0.22, organic: 0.5,  floorGeo: 'floorBox',     cap: 'capSpire' },
-  minadd9:{ taper: 0.04, mutateBase: 0.20, organic: 0.45, floorGeo: 'floorBox',     cap: 'capPitched' },
-  add9:   { taper: 0.03, mutateBase: 0.15, organic: 0.2,  floorGeo: 'floorRound',   cap: 'capDome' },
-  min9:   { taper: 0.05, mutateBase: 0.24, organic: 0.55, floorGeo: 'floorBox',     cap: 'capSpire' },
-  dom9:   { taper: 0.03, mutateBase: 0.12, organic: 0.15, floorGeo: 'floorBox',     cap: 'capFlat' },
-  maj9:   { taper: 0.02, mutateBase: 0.08, organic: 0.1,  floorGeo: 'floorChamfer', cap: 'capDome' },
+// ===================== ZONE SYSTEM =====================
+const ZONES = {
+  urban: {
+    palettes: [0x4a6fa5, 0x3d5c8a, 0x2c4a6e, 0x5577aa, 0x446699],
+    floorGeo: 'floorBox',
+    caps: ['capFlat','capFlat','capFlat','capDome'],
+    details: ['windowBay','acUnit','antenna','dish'],
+    taper: 0.015, mutateBase: 0.10, organic: 0.05,
+    floorRange: [8, 18], litP: 0.8, met: 0.5, rough: 0.3,
+  },
+  commercial: {
+    palettes: [0x5a7a6a, 0x4a6a5a, 0x6a8a7a, 0x3a5a4a, 0x7a9a8a],
+    floorGeo: 'floorBox',
+    caps: ['capFlat','capFlat','capGarden'],
+    details: ['windowBay','awning','shopFront','acUnit'],
+    taper: 0.01, mutateBase: 0.08, organic: 0.03,
+    floorRange: [4, 12], litP: 0.85, met: 0.4, rough: 0.35,
+    groundFloorShop: true,
+  },
+  suburban: {
+    palettes: [0x8a7a5a, 0x7a6a4a, 0x9a8a6a, 0x6a5a3a, 0xaa9a7a],
+    floorGeo: 'floorBox',
+    caps: ['capPitched','capPitched','capGarden'],
+    details: ['balcony','awning','vine','porch'],
+    taper: 0.03, mutateBase: 0.20, organic: 0.25,
+    floorRange: [2, 6], litP: 0.6, met: 0.15, rough: 0.8,
+  },
+  village: {
+    palettes: [0x6a5a4a, 0x5a4a3a, 0x7a6a5a, 0x8a7a6a, 0x9a8a7a],
+    floorGeo: 'floorWide',
+    caps: ['capPitched','capGarden','capPitched'],
+    details: ['vine','awning','porch'],
+    taper: 0.05, mutateBase: 0.28, organic: 0.45,
+    floorRange: [1, 4], litP: 0.35, met: 0.05, rough: 0.9,
+  },
+  hightech: {
+    palettes: [0x4a8aaa, 0x5a9abb, 0x3a7a9a, 0x6aaacc, 0x7abbdd],
+    floorGeo: 'floorChamfer',
+    caps: ['capDome','capFlat','capDome'],
+    details: ['dish','antenna','solarPanel','windowBay'],
+    taper: 0.01, mutateBase: 0.05, organic: 0.02,
+    floorRange: [10, 18], litP: 0.92, met: 0.7, rough: 0.1,
+  },
+  industrial: {
+    palettes: [0x5a4a4a, 0x4a3a3a, 0x6a5a5a, 0x3a2a2a, 0x4a4a3a],
+    floorGeo: 'floorBox',
+    caps: ['capFlat','capFlat'],
+    details: ['chimney','acUnit','waterTank'],
+    taper: 0.005, mutateBase: 0.12, organic: 0.08,
+    floorRange: [2, 8], litP: 0.5, met: 0.1, rough: 0.9,
+  },
+  religious: {
+    palettes: [0xaa9a6a, 0xccbb88, 0x6a8a7a, 0x8a7a5a, 0xbbaa77],
+    floorGeo: 'floorRound',
+    caps: ['capOnion','capDome','capSpire'],
+    details: ['archway','vine','windowBay'],
+    taper: 0.02, mutateBase: 0.06, organic: 0.08,
+    floorRange: [3, 10], litP: 0.5, met: 0.3, rough: 0.5,
+    hasMinaret: true,
+  },
 };
 
-const INTERVAL_DETAILS = {
-  3: 'balcony', 4: 'balcony', 5: 'windowBay', 7: 'windowBay',
-  10: 'antenna', 11: 'antenna', 14: 'waterTank',
+function getZone(chordType) {
+  switch (chordType) {
+    case 'maj': case 'dom9': return 'urban';
+    case 'dom7': return 'commercial';
+    case 'min': case 'minMaj7': case 'minadd9': return 'suburban';
+    case 'min7': case 'min9': return 'village';
+    case 'maj7': case 'maj9': return 'hightech';
+    case 'dim': case 'dim7': case 'power': return 'industrial';
+    case 'aug': case 'add9': return 'religious';
+    case 'sus2': return 'village';
+    case 'sus4': return 'suburban';
+    default: return 'suburban';
+  }
+}
+
+// ===================== WEATHER SYSTEM =====================
+const WEATHER = {
+  clear:    { bg: 0x0a0a28, fogNear: 150, fogFar: 600, rain: false },
+  overcast: { bg: 0x080820, fogNear: 100, fogFar: 450, rain: false },
+  rain:     { bg: 0x060618, fogNear: 80,  fogFar: 350, rain: true },
+  storm:    { bg: 0x040410, fogNear: 50,  fogFar: 250, rain: true },
+  mist:     { bg: 0x0c0c30, fogNear: 60,  fogFar: 350, rain: false },
 };
+
+function getWeather(chordType) {
+  if (['min7','min9'].includes(chordType)) return 'rain';
+  if (['dim','dim7'].includes(chordType)) return 'storm';
+  if (['min','minMaj7','minadd9'].includes(chordType)) return 'overcast';
+  if (['aug','add9','power'].includes(chordType)) return 'mist';
+  return 'clear';
+}
+
+let currentWeather = 'clear';
+let targetBg = new THREE.Color(0x0a0a28);
+
+// Rain particles
+const rainCount = 3000;
+const rainPositions = new Float32Array(rainCount * 3);
+const rainSpeeds = new Float32Array(rainCount);
+for (let i = 0; i < rainCount; i++) {
+  rainPositions[i*3]   = (Math.random() - 0.5) * 300;
+  rainPositions[i*3+1] = Math.random() * 120;
+  rainPositions[i*3+2] = (Math.random() - 0.5) * 300;
+  rainSpeeds[i] = 1.5 + Math.random() * 2;
+}
+const rainGeo = new THREE.BufferGeometry();
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+const rainMesh = new THREE.Points(rainGeo, new THREE.PointsMaterial({
+  color: 0x8888cc, size: 0.15, transparent: true, opacity: 0.35,
+}));
+rainMesh.visible = false;
+scene.add(rainMesh);
+
+function setWeather(w) {
+  if (w === currentWeather) return;
+  currentWeather = w;
+  const cfg = WEATHER[w];
+  targetBg = new THREE.Color(cfg.bg);
+  scene.fog.near = cfg.fogNear;
+  scene.fog.far = cfg.fogFar;
+  scene.fog.color.set(cfg.bg);
+  rainMesh.visible = cfg.rain;
+}
 
 // ===================== COMPOSITE BUILDING ASSEMBLY =====================
 function assembleBuilding(p) {
   const g = new THREE.Group();
-  const growth = GROWTH[p.chordType] || GROWTH.chord;
-  const style = p.style;
+  const zone = p.zone;
   const rng = p.rng;
+  const color = p.color;
 
-  // Floor count directly from velocity (3-18)
-  const floorCount = Math.max(3, Math.min(18, Math.round(3 + (p.velocity / 127) * 15)));
+  // Floor count from velocity, clamped to zone range
+  const [minF, maxF] = zone.floorRange;
+  const floorCount = Math.max(minF, Math.min(maxF, Math.round(minF + (p.velocity / 127) * (maxF - minF))));
 
   // Base footprint
   let footW = Math.min(CELL_FIT, 4 + p.noteCount * 0.8 + rng() * 2);
   let footD = Math.min(CELL_FIT, 4 + rng() * 2);
 
+  // Context: blend color with previous building if same zone
+  let blendColor = color;
+  if (p.prevColor && rng() < 0.4) {
+    blendColor = color.clone().lerp(p.prevColor, 0.25);
+  }
+
+  const baseMat = solidMat(blendColor.clone().multiplyScalar(0.6), 0.85, 0.15);
+
   // Base slab
-  const baseMat = solidMat(p.color.clone().multiplyScalar(0.6), 0.85, 0.15);
   const base = new THREE.Mesh(new THREE.BoxGeometry(footW + 0.5, 0.4, footD + 0.5), baseMat);
   base.position.y = 0.2;
   g.add(base);
 
+  // Commercial ground floor shop front
+  if (zone.groundFloorShop && rng() < 0.7) {
+    const shopMat = solidMat(new THREE.Color().setHSL(rng() * 0.1 + 0.08, 0.5, 0.35), 0.6, 0.2);
+    for (const side of [-1, 1]) {
+      const shop = new THREE.Mesh(PARTS.shopFront, shopMat);
+      shop.position.set(0, 0.7, side * (footD / 2 + 0.06));
+      shop.scale.set(footW * 0.8, 1, 1);
+      g.add(shop);
+    }
+  }
+
   // Grow floors
   let curW = footW, curD = footD;
-  const floorGeo = PARTS[growth.floorGeo];
+  const floorGeo = PARTS[zone.floorGeo];
   const intervals = p.intervals || [];
+  const zoneDetails = zone.details;
 
   for (let f = 0; f < floorCount; f++) {
     const floorY = 0.4 + f * FLOOR_H;
     const heightRatio = f / floorCount;
 
-    // Taper
-    curW *= (1 - growth.taper);
-    curD *= (1 - growth.taper);
+    curW *= (1 - zone.taper);
+    curD *= (1 - zone.taper);
 
-    // Floor texture
+    // Floor texture — color varies slightly per floor
     const cols = Math.max(2, Math.round(curW / 2));
     const tex = makeWindowTex(1, cols,
-      colorToHex(p.color.clone().multiplyScalar(0.4 + rng() * 0.15)),
-      style.litP, rng);
-    const mat = buildingMat(tex, style);
+      colorToHex(blendColor.clone().multiplyScalar(0.35 + rng() * 0.2)),
+      zone.litP, rng);
+    const mat = buildingMat(tex, { rough: zone.rough, met: zone.met });
 
-    // Floor mesh
     const floor = new THREE.Mesh(floorGeo, mat);
     floor.scale.set(curW, 1, curD);
     floor.position.y = floorY + FLOOR_H / 2;
     g.add(floor);
 
     // Organic offset
-    if (rng() < growth.organic * 0.3) {
-      floor.position.x += (rng() - 0.5) * 0.4;
-      floor.position.z += (rng() - 0.5) * 0.4;
+    if (rng() < zone.organic * 0.3) {
+      floor.position.x += (rng() - 0.5) * 0.5;
+      floor.position.z += (rng() - 0.5) * 0.5;
     }
 
-    // Mutations (chance increases with height)
-    const mutateChance = growth.mutateBase + heightRatio * 0.15;
+    // Mutations
+    const mutateChance = zone.mutateBase + heightRatio * 0.15;
     if (rng() < mutateChance) {
       const roll = rng();
-      if (roll < 0.4) {
-        // Balcony protrusion
-        const balcony = new THREE.Mesh(PARTS.balcony, baseMat);
+      if (roll < 0.35) {
+        // Balcony / porch protrusion
+        const partKey = rng() < 0.7 ? 'balcony' : 'porch';
+        const mut = new THREE.Mesh(PARTS[partKey], baseMat);
         const side = rng() > 0.5 ? 1 : -1;
         if (rng() > 0.5) {
-          balcony.position.set(0, floorY + 0.15, side * (curD / 2 + 0.15));
-          balcony.scale.set(curW * 0.6, 1, 1);
+          mut.position.set(0, floorY + 0.15, side * (curD / 2 + 0.15));
+          mut.scale.set(curW * 0.6, 1, 1);
         } else {
-          balcony.position.set(side * (curW / 2 + 0.15), floorY + 0.15, 0);
-          balcony.scale.set(1, 1, curD * 0.6);
-          balcony.rotation.y = Math.PI / 2;
+          mut.position.set(side * (curW / 2 + 0.15), floorY + 0.15, 0);
+          mut.scale.set(1, 1, curD * 0.6);
         }
-        g.add(balcony);
-      } else if (roll < 0.7) {
-        // Setback — shrink remaining floors
-        curW *= 0.85;
-        curD *= 0.85;
-      } else {
-        // Cantilever — widen this floor
+        g.add(mut);
+      } else if (roll < 0.6) {
+        curW *= 0.85; curD *= 0.85;
+      } else if (roll < 0.8) {
         floor.scale.set(curW * 1.12, 1, curD * 1.12);
+      } else {
+        // Terrace — half-height wider section
+        const terr = new THREE.Mesh(PARTS.terrace, baseMat);
+        terr.position.y = floorY + FLOOR_H * 0.25;
+        terr.scale.set(curW * 0.9, 1, curD * 0.9);
+        g.add(terr);
       }
     }
 
-    // Detail pass — driven by chord intervals
-    for (const iv of intervals) {
-      const detailKey = INTERVAL_DETAILS[iv];
-      if (!detailKey || !PARTS[detailKey]) continue;
-      if (rng() > 0.35) continue;
+    // Detail pass — zone details + interval details
+    for (const detailKey of zoneDetails) {
+      if (!PARTS[detailKey]) continue;
+      if (rng() > 0.25) continue;
 
       const isVine = detailKey === 'vine';
+      const isArchway = detailKey === 'archway';
       const detail = new THREE.Mesh(PARTS[detailKey],
-        isVine
-          ? solidMat(new THREE.Color().setHSL(0.3, 0.5, 0.2 + rng() * 0.1), 0.9, 0.05)
-          : solidMat(p.color.clone().multiplyScalar(0.5 + rng() * 0.2), 0.7, 0.3)
+        isVine ? solidMat(new THREE.Color().setHSL(0.28 + rng() * 0.08, 0.5, 0.2 + rng() * 0.1), 0.9, 0.05)
+        : isArchway ? solidMat(blendColor.clone().multiplyScalar(0.8), 0.6, 0.3)
+        : solidMat(blendColor.clone().multiplyScalar(0.45 + rng() * 0.2), 0.7, 0.3)
       );
 
       const face = rng();
-      if (face < 0.25) {
-        detail.position.set(curW / 2 + 0.08, floorY + FLOOR_H * 0.5, (rng() - 0.5) * curD * 0.6);
-      } else if (face < 0.5) {
-        detail.position.set(-curW / 2 - 0.08, floorY + FLOOR_H * 0.5, (rng() - 0.5) * curD * 0.6);
-      } else if (face < 0.75) {
-        detail.position.set((rng() - 0.5) * curW * 0.6, floorY + FLOOR_H * 0.5, curD / 2 + 0.08);
-      } else {
-        detail.position.set((rng() - 0.5) * curW * 0.6, floorY + FLOOR_H * 0.5, -curD / 2 - 0.08);
-      }
+      if (face < 0.25)      detail.position.set(curW/2 + 0.08, floorY + FLOOR_H*0.5, (rng()-0.5)*curD*0.6);
+      else if (face < 0.5)  detail.position.set(-curW/2 - 0.08, floorY + FLOOR_H*0.5, (rng()-0.5)*curD*0.6);
+      else if (face < 0.75) detail.position.set((rng()-0.5)*curW*0.6, floorY + FLOOR_H*0.5, curD/2 + 0.08);
+      else                  detail.position.set((rng()-0.5)*curW*0.6, floorY + FLOOR_H*0.5, -curD/2 - 0.08);
       g.add(detail);
     }
   }
 
   // Cap
   const capY = 0.4 + floorCount * FLOOR_H;
-  const capGeo = PARTS[growth.cap];
-  const isGarden = growth.cap === 'capGarden';
-  const capMesh = new THREE.Mesh(capGeo,
-    isGarden
-      ? solidMat(new THREE.Color().setHSL(0.3, 0.4, 0.25), 0.9, 0.05)
-      : solidMat(p.color.clone().multiplyScalar(0.7), 0.5, 0.3)
+  const capKey = zone.caps[Math.floor(rng() * zone.caps.length)];
+  const isGarden = capKey === 'capGarden';
+  const isOnion = capKey === 'capOnion';
+  const capMesh = new THREE.Mesh(PARTS[capKey],
+    isGarden ? solidMat(new THREE.Color().setHSL(0.3, 0.4, 0.25), 0.9, 0.05)
+    : solidMat(blendColor.clone().multiplyScalar(0.7), 0.5, 0.3)
   );
-  capMesh.scale.set(curW, 1, curD);
+  capMesh.scale.set(curW, isOnion ? 1.4 : 1, curD);
   capMesh.position.y = capY;
-  if (growth.cap === 'capPitched') capMesh.rotation.y = Math.PI / 4;
+  if (capKey === 'capPitched') capMesh.rotation.y = Math.PI / 4;
   g.add(capMesh);
+
+  // Religious: add minarets
+  if (zone.hasMinaret && floorCount >= 4) {
+    const minaretH = floorCount * FLOOR_H * 0.6;
+    for (const sx of [-1, 1]) {
+      const mn = new THREE.Mesh(PARTS.minaret,
+        solidMat(blendColor.clone().multiplyScalar(0.9), 0.5, 0.3));
+      mn.scale.y = minaretH / 6;
+      mn.position.set(sx * (curW * 0.6 + 0.5), minaretH / 2, 0);
+      g.add(mn);
+      const cap2 = new THREE.Mesh(PARTS.minaretCap,
+        solidMat(blendColor.clone().multiplyScalar(1.1), 0.4, 0.4));
+      cap2.position.set(sx * (curW * 0.6 + 0.5), minaretH + 0.1, 0);
+      g.add(cap2);
+    }
+  }
 
   // Rooftop details
   if (intervals.includes(10) || intervals.includes(11)) {
     const ant = new THREE.Mesh(PARTS.antenna, solidMat(0x666677, 0.5, 0.6));
-    ant.position.set((rng() - 0.5) * curW * 0.4, capY + 1.25, (rng() - 0.5) * curD * 0.4);
+    ant.position.set((rng()-0.5)*curW*0.4, capY+1.25, (rng()-0.5)*curD*0.4);
     g.add(ant);
   }
   if (intervals.includes(14)) {
     const tank = new THREE.Mesh(PARTS.waterTank, solidMat(0x556666, 0.6, 0.4));
-    tank.position.set((rng() - 0.5) * curW * 0.3, capY + 0.3, (rng() - 0.5) * curD * 0.3);
+    tank.position.set((rng()-0.5)*curW*0.3, capY+0.3, (rng()-0.5)*curD*0.3);
     g.add(tank);
+  }
+  // High-tech: solar panels on roof
+  if (zone === ZONES.hightech && rng() < 0.6) {
+    const panel = new THREE.Mesh(PARTS.solarPanel, solidMat(0x223355, 0.3, 0.7));
+    panel.position.set((rng()-0.5)*curW*0.3, capY+0.15, (rng()-0.5)*curD*0.3);
+    panel.rotation.x = -0.3;
+    g.add(panel);
+  }
+  // Industrial: chimney stacks
+  if (zone === ZONES.industrial) {
+    const chimneyCount = 1 + Math.floor(rng() * 2);
+    for (let ci = 0; ci < chimneyCount; ci++) {
+      const ch = new THREE.Mesh(PARTS.chimney, solidMat(0x3a3a3a, 0.9, 0.05));
+      ch.position.set((rng()-0.5)*curW*0.5, capY+1, (rng()-0.5)*curD*0.5);
+      g.add(ch);
+    }
   }
 
   return g;
@@ -779,22 +921,30 @@ function assembleBuilding(p) {
 function addBuilding(chord, velocity) {
   const seed = chord.notes.reduce((a, b) => a * 31 + b, 7) + Date.now();
   const rng = seededRandom(seed);
-  const style = STYLES[chord.type] || STYLES.chord;
-  const color = colorFromStyle(chord.root, style);
+
+  // Zone detection with context momentum
+  let zoneName = getZone(chord.type);
+  if (buildings.length > 0 && rng() < 0.5) {
+    zoneName = buildings[buildings.length - 1].zoneName;
+  }
+  const zone = ZONES[zoneName];
+  const color = zoneColor(zone.palettes, chord.root, rng);
+
+  // Get previous building's color for blending
+  const prevColor = buildings.length > 0 ? buildings[buildings.length - 1].color : null;
+
   const placement = findPlacement(rng);
   if (!placement) return;
   const { gx, gz, algo } = placement;
   const world = gridToWorld(gx, gz);
 
   const group = assembleBuilding({
-    velocity,
-    color,
-    style,
-    rng,
+    velocity, color, zone, rng,
     chordType: chord.type,
     noteCount: chord.notes.length,
     intervals: chord.intervals || [],
     root: chord.root,
+    prevColor,
   });
 
   group.position.set(world.x, 0, world.z);
@@ -802,16 +952,19 @@ function addBuilding(chord, velocity) {
   group.scale.y = 0.01;
   scene.add(group);
   spawning.push({ group, progress: 0 });
-  buildings.push({ group, gx, gz, chord, velocity });
+  buildings.push({ group, gx, gz, chord, velocity, zoneName, color });
 
   spawnConnectors(buildings[buildings.length - 1], rng);
   generateRoadsForBuilding(gx, gz, rng);
   startRoadGrowth();
 
+  // Weather changes with chord
+  setWeather(getWeather(chord.type));
+
   countEl.textContent = buildings.length;
   const algoClass = algo === 'DLA' ? 'algo-dla' : algo === 'Eden' ? 'algo-eden' : algo === 'Sprawl' ? 'algo-sprawl' : 'dim';
   algoEl.className = algoClass;
-  algoEl.textContent = algo;
+  algoEl.textContent = `${algo} · ${zoneName}`;
 }
 
 // ===================== INPUT =====================
@@ -958,6 +1111,21 @@ function animate() {
     s.progress = Math.min(1, s.progress + 0.02);
     s.group.scale.y = easeOutBack(s.progress);
     if (s.progress >= 1) spawning.splice(i, 1);
+  }
+  // Weather: smooth background transition
+  scene.background.lerp(targetBg, 0.02);
+  // Rain animation
+  if (rainMesh.visible) {
+    const pos = rainGeo.attributes.position.array;
+    for (let i = 0; i < rainCount; i++) {
+      pos[i*3+1] -= rainSpeeds[i];
+      if (pos[i*3+1] < 0) {
+        pos[i*3+1] = 80 + Math.random() * 40;
+        pos[i*3]   = (Math.random() - 0.5) * 300;
+        pos[i*3+2] = (Math.random() - 0.5) * 300;
+      }
+    }
+    rainGeo.attributes.position.needsUpdate = true;
   }
   renderer.render(scene, camera);
 }
