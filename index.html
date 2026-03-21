@@ -67,6 +67,7 @@
 </div>
 <div id="info">
   <span class="dim">Buildings:</span> <span id="count">0</span><br>
+  <span class="dim">Zone:</span> <span id="zone-name">—</span><br>
   <span class="dim">Algorithm:</span> <span id="algo-name">—</span>
 </div>
 <div id="piano"></div>
@@ -670,69 +671,42 @@ const ZONES = {
   },
 };
 
-function getZone(chordType) {
-  switch (chordType) {
-    case 'maj': case 'dom9': return 'urban';
-    case 'dom7': return 'commercial';
-    case 'min': case 'minMaj7': case 'minadd9': return 'suburban';
-    case 'min7': case 'min9': return 'village';
-    case 'maj7': case 'maj9': return 'hightech';
-    case 'dim': case 'dim7': case 'power': return 'industrial';
-    case 'aug': case 'add9': return 'religious';
-    case 'sus2': return 'village';
-    case 'sus4': return 'suburban';
-    default: return 'suburban';
-  }
+// ===================== SESSION ZONE =====================
+const ZONE_NAMES = Object.keys(ZONES);
+let sessionZoneName = ZONE_NAMES[Math.floor(Math.random() * ZONE_NAMES.length)];
+let sessionZone = ZONES[sessionZoneName];
+
+const zoneEl = document.getElementById('zone-name');
+zoneEl.textContent = sessionZoneName;
+
+function pickNewZone() {
+  sessionZoneName = ZONE_NAMES[Math.floor(Math.random() * ZONE_NAMES.length)];
+  sessionZone = ZONES[sessionZoneName];
+  zoneEl.textContent = sessionZoneName;
 }
 
-// ===================== WEATHER SYSTEM =====================
-const WEATHER = {
-  clear:    { bg: 0x0a0a28, fogNear: 150, fogFar: 600, rain: false },
-  overcast: { bg: 0x080820, fogNear: 100, fogFar: 450, rain: false },
-  rain:     { bg: 0x060618, fogNear: 80,  fogFar: 350, rain: true },
-  storm:    { bg: 0x040410, fogNear: 50,  fogFar: 250, rain: true },
-  mist:     { bg: 0x0c0c30, fogNear: 60,  fogFar: 350, rain: false },
+// ===================== PER-BUILDING MOOD =====================
+// Chord mood affects the individual building's lighting, not the scene
+const CHORD_MOOD = {
+  maj:     { emissive: 1.3, litShift: 0.15, warmth: 0.05 },
+  min:     { emissive: 0.7, litShift: -0.2, warmth: -0.05 },
+  dim:     { emissive: 0.5, litShift: -0.3, warmth: -0.08 },
+  aug:     { emissive: 1.1, litShift: 0.1,  warmth: 0.1 },
+  dom7:    { emissive: 1.2, litShift: 0.1,  warmth: 0.03 },
+  min7:    { emissive: 0.6, litShift: -0.25, warmth: -0.06 },
+  maj7:    { emissive: 1.4, litShift: 0.2,  warmth: 0.02 },
+  dim7:    { emissive: 0.45, litShift: -0.3, warmth: -0.1 },
+  sus2:    { emissive: 0.9, litShift: 0.0,  warmth: 0.0 },
+  sus4:    { emissive: 0.85, litShift: -0.05, warmth: 0.0 },
+  power:   { emissive: 0.55, litShift: -0.25, warmth: -0.05 },
+  chord:   { emissive: 0.9, litShift: 0.0,  warmth: 0.0 },
+  minMaj7: { emissive: 0.75, litShift: -0.15, warmth: -0.03 },
+  minadd9: { emissive: 0.7, litShift: -0.18, warmth: -0.04 },
+  add9:    { emissive: 1.0, litShift: 0.08, warmth: 0.08 },
+  min9:    { emissive: 0.6, litShift: -0.22, warmth: -0.06 },
+  dom9:    { emissive: 1.15, litShift: 0.1,  warmth: 0.04 },
+  maj9:    { emissive: 1.35, litShift: 0.18, warmth: 0.03 },
 };
-
-function getWeather(chordType) {
-  if (['min7','min9'].includes(chordType)) return 'rain';
-  if (['dim','dim7'].includes(chordType)) return 'storm';
-  if (['min','minMaj7','minadd9'].includes(chordType)) return 'overcast';
-  if (['aug','add9','power'].includes(chordType)) return 'mist';
-  return 'clear';
-}
-
-let currentWeather = 'clear';
-let targetBg = new THREE.Color(0x0a0a28);
-
-// Rain particles
-const rainCount = 3000;
-const rainPositions = new Float32Array(rainCount * 3);
-const rainSpeeds = new Float32Array(rainCount);
-for (let i = 0; i < rainCount; i++) {
-  rainPositions[i*3]   = (Math.random() - 0.5) * 300;
-  rainPositions[i*3+1] = Math.random() * 120;
-  rainPositions[i*3+2] = (Math.random() - 0.5) * 300;
-  rainSpeeds[i] = 1.5 + Math.random() * 2;
-}
-const rainGeo = new THREE.BufferGeometry();
-rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
-const rainMesh = new THREE.Points(rainGeo, new THREE.PointsMaterial({
-  color: 0x8888cc, size: 0.15, transparent: true, opacity: 0.35,
-}));
-rainMesh.visible = false;
-scene.add(rainMesh);
-
-function setWeather(w) {
-  if (w === currentWeather) return;
-  currentWeather = w;
-  const cfg = WEATHER[w];
-  targetBg = new THREE.Color(cfg.bg);
-  scene.fog.near = cfg.fogNear;
-  scene.fog.far = cfg.fogFar;
-  scene.fog.color.set(cfg.bg);
-  rainMesh.visible = cfg.rain;
-}
 
 // ===================== COMPOSITE BUILDING ASSEMBLY =====================
 function assembleBuilding(p) {
@@ -740,20 +714,28 @@ function assembleBuilding(p) {
   const zone = p.zone;
   const rng = p.rng;
   const color = p.color;
+  const mood = CHORD_MOOD[p.chordType] || CHORD_MOOD.chord;
 
   // Floor count from velocity, clamped to zone range
   const [minF, maxF] = zone.floorRange;
   const floorCount = Math.max(minF, Math.min(maxF, Math.round(minF + (p.velocity / 127) * (maxF - minF))));
 
+  // Per-building lit probability = zone base + chord mood shift
+  const buildingLitP = Math.max(0.1, Math.min(0.95, zone.litP + mood.litShift));
+  const buildingEmissive = mood.emissive;
+
   // Base footprint
   let footW = Math.min(CELL_FIT, 4 + p.noteCount * 0.8 + rng() * 2);
   let footD = Math.min(CELL_FIT, 4 + rng() * 2);
 
-  // Context: blend color with previous building if same zone
+  // Context: blend color with previous building
   let blendColor = color;
   if (p.prevColor && rng() < 0.4) {
     blendColor = color.clone().lerp(p.prevColor, 0.25);
   }
+  // Apply warmth shift from mood
+  const hsl = {}; blendColor.getHSL(hsl);
+  blendColor.setHSL(hsl.h + mood.warmth, hsl.s, hsl.l);
 
   const baseMat = solidMat(blendColor.clone().multiplyScalar(0.6), 0.85, 0.15);
 
@@ -790,8 +772,9 @@ function assembleBuilding(p) {
     const cols = Math.max(2, Math.round(curW / 2));
     const tex = makeWindowTex(1, cols,
       colorToHex(blendColor.clone().multiplyScalar(0.35 + rng() * 0.2)),
-      zone.litP, rng);
+      buildingLitP, rng);
     const mat = buildingMat(tex, { rough: zone.rough, met: zone.met });
+    mat.emissiveIntensity = buildingEmissive;
 
     const floor = new THREE.Mesh(floorGeo, mat);
     floor.scale.set(curW, 1, curD);
@@ -922,12 +905,8 @@ function addBuilding(chord, velocity) {
   const seed = chord.notes.reduce((a, b) => a * 31 + b, 7) + Date.now();
   const rng = seededRandom(seed);
 
-  // Zone detection with context momentum
-  let zoneName = getZone(chord.type);
-  if (buildings.length > 0 && rng() < 0.5) {
-    zoneName = buildings[buildings.length - 1].zoneName;
-  }
-  const zone = ZONES[zoneName];
+  // Use session zone (randomly picked at page load / reset)
+  const zone = sessionZone;
   const color = zoneColor(zone.palettes, chord.root, rng);
 
   // Get previous building's color for blending
@@ -952,19 +931,16 @@ function addBuilding(chord, velocity) {
   group.scale.y = 0.01;
   scene.add(group);
   spawning.push({ group, progress: 0 });
-  buildings.push({ group, gx, gz, chord, velocity, zoneName, color });
+  buildings.push({ group, gx, gz, chord, velocity, zoneName: sessionZoneName, color });
 
   spawnConnectors(buildings[buildings.length - 1], rng);
   generateRoadsForBuilding(gx, gz, rng);
   startRoadGrowth();
 
-  // Weather changes with chord
-  setWeather(getWeather(chord.type));
-
   countEl.textContent = buildings.length;
   const algoClass = algo === 'DLA' ? 'algo-dla' : algo === 'Eden' ? 'algo-eden' : algo === 'Sprawl' ? 'algo-sprawl' : 'dim';
   algoEl.className = algoClass;
-  algoEl.textContent = `${algo} · ${zoneName}`;
+  algoEl.textContent = algo;
 }
 
 // ===================== INPUT =====================
@@ -1024,6 +1000,7 @@ function resetCity() {
   if (roadInterval) { clearInterval(roadInterval); roadInterval = null; }
   countEl.textContent = '0';
   algoEl.textContent = '—'; algoEl.className = 'dim';
+  pickNewZone();
 }
 
 document.addEventListener('keydown', (e) => {
@@ -1111,21 +1088,6 @@ function animate() {
     s.progress = Math.min(1, s.progress + 0.02);
     s.group.scale.y = easeOutBack(s.progress);
     if (s.progress >= 1) spawning.splice(i, 1);
-  }
-  // Weather: smooth background transition
-  scene.background.lerp(targetBg, 0.02);
-  // Rain animation
-  if (rainMesh.visible) {
-    const pos = rainGeo.attributes.position.array;
-    for (let i = 0; i < rainCount; i++) {
-      pos[i*3+1] -= rainSpeeds[i];
-      if (pos[i*3+1] < 0) {
-        pos[i*3+1] = 80 + Math.random() * 40;
-        pos[i*3]   = (Math.random() - 0.5) * 300;
-        pos[i*3+2] = (Math.random() - 0.5) * 300;
-      }
-    }
-    rainGeo.attributes.position.needsUpdate = true;
   }
   renderer.render(scene, camera);
 }
