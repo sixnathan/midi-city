@@ -126,12 +126,36 @@ renderer.toneMappingExposure = 1.3;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a28);
 scene.fog = new THREE.Fog(0x0a0a28, 150, 600);
 
+// Sky sphere — gradient from dark blue (top) to deep purple (horizon)
+const skyGeo = new THREE.SphereGeometry(800, 32, 16);
+const skyMat = new THREE.ShaderMaterial({
+  uniforms: {},
+  vertexShader: `
+    varying vec3 vWorldPos;
+    void main() {
+      vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vWorldPos;
+    void main() {
+      float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
+      vec3 topColor    = vec3(0.02, 0.02, 0.12);
+      vec3 horizColor  = vec3(0.12, 0.04, 0.22);
+      gl_FragColor = vec4(mix(horizColor, topColor, t), 1.0);
+    }
+  `,
+  side: THREE.BackSide,
+  depthWrite: false,
+});
+scene.add(new THREE.Mesh(skyGeo, skyMat));
+
 // Fixed overhead camera — never moves
-const camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 1200);
-camera.position.set(0, 280, 200);
+const camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 1200);
+camera.position.set(0, 240, 180);
 camera.lookAt(0, 0, 0);
 
 // --- Lights (brighter, no per-building PointLights) ---
@@ -164,18 +188,32 @@ for (let i = 0; i < starCount; i++) {
 }
 const starGeo = new THREE.BufferGeometry();
 starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
-  color: 0xffffff, size: 0.4, transparent: true, opacity: 0.7
-})));
+const starMat = new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.4, transparent: true, opacity: 0.7,
+});
+scene.add(new THREE.Points(starGeo, starMat));
 
-// Ground
+// Ground — darker with subtle metalness for a wet/reflective look
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(800, 800),
-  new THREE.MeshStandardMaterial({ color: 0x0e0e1e, roughness: 0.92, metalness: 0.05 })
+  new THREE.MeshStandardMaterial({ color: 0x080814, roughness: 0.88, metalness: 0.15 })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.02;
 scene.add(ground);
+
+// Ground center glow — large emissive circle for city-center warmth
+const glowGeo = new THREE.CircleGeometry(120, 64);
+const glowMat = new THREE.MeshBasicMaterial({
+  color: 0x2a1a4a,
+  transparent: true,
+  opacity: 0.18,
+  depthWrite: false,
+});
+const groundGlow = new THREE.Mesh(glowGeo, glowMat);
+groundGlow.rotation.x = -Math.PI / 2;
+groundGlow.position.y = 0.03;
+scene.add(groundGlow);
 
 window.addEventListener('resize', () => {
   W = window.innerWidth; H = window.innerHeight;
@@ -281,6 +319,9 @@ scene.add(benchMesh);
 
 let treeCount = 0, carCount = 0, benchCount = 0;
 
+const TREE_COLORS = [0x2a5a2a, 0x1a4a1a, 0x3a6a2a, 0x2a5a3a];
+const _treeColor = new THREE.Color();
+
 function addTree(wx, wz) {
   if (treeCount >= CONN_MAX) return;
   const s = 0.7 + Math.random() * 0.6;
@@ -291,11 +332,14 @@ function addTree(wx, wz) {
   dummy.position.y = 1.8 * s;
   dummy.updateMatrix();
   treeMesh.setMatrixAt(treeCount, dummy.matrix);
+  _treeColor.setHex(TREE_COLORS[Math.floor(Math.random() * TREE_COLORS.length)]);
+  treeMesh.setColorAt(treeCount, _treeColor);
   treeCount++;
   treeMesh.count = treeCount;
   trunkMesh.count = treeCount;
   treeMesh.instanceMatrix.needsUpdate = true;
   trunkMesh.instanceMatrix.needsUpdate = true;
+  if (treeMesh.instanceColor) treeMesh.instanceColor.needsUpdate = true;
   dummy.scale.set(1, 1, 1);
 }
 
@@ -1081,8 +1125,16 @@ function easeOutBack(t) {
   return 1 + c3 * Math.pow(t-1, 3) + c1 * Math.pow(t-1, 2);
 }
 
+let animTime = 0;
+
 function animate() {
   requestAnimationFrame(animate);
+  animTime += 0.016;
+
+  // Star twinkling — sine wave on opacity and size
+  starMat.opacity = 0.55 + 0.2 * Math.sin(animTime * 1.3);
+  starMat.size = 0.35 + 0.12 * Math.sin(animTime * 0.9 + 1.2);
+
   for (let i = spawning.length-1; i >= 0; i--) {
     const s = spawning[i];
     s.progress = Math.min(1, s.progress + 0.02);
