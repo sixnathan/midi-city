@@ -825,7 +825,7 @@ function detectChord(notes) {
   const sorted = [...notes].sort((a, b) => a - b);
   const root = sorted[0] % 12;
   const intervals = sorted.map(n => (n%12 - root + 12) % 12).sort((a, b) => a - b);
-  return { root, name: NOTE_NAMES[root], type: CHORD_MAP[intervals.join(',')] || 'chord', notes: sorted };
+  return { root, name: NOTE_NAMES[root], type: CHORD_MAP[intervals.join(',')] || 'chord', notes: sorted, intervals };
 }
 
 function tryDetectChord() {
