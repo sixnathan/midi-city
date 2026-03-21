@@ -215,6 +215,20 @@ groundGlow.rotation.x = -Math.PI / 2;
 groundGlow.position.y = 0.03;
 scene.add(groundGlow);
 
+// Horizon glow ring — large faint warm torus at ground level
+const horizonRing = new THREE.Mesh(
+  new THREE.TorusGeometry(300, 2, 8, 64),
+  new THREE.MeshBasicMaterial({
+    color: 0x1a1a3a,
+    transparent: true,
+    opacity: 0.1,
+    depthWrite: false,
+  })
+);
+horizonRing.rotation.x = -Math.PI / 2;
+horizonRing.position.y = 0.5;
+scene.add(horizonRing);
+
 window.addEventListener('resize', () => {
   W = window.innerWidth; H = window.innerHeight;
   camera.aspect = W / H;
@@ -241,9 +255,29 @@ function key(x, z) { return `${x},${z}`; }
 const ROAD_MAX = 3000;
 const roadGeo = new THREE.PlaneGeometry(CELL_SIZE * 0.92, CELL_SIZE * 0.92);
 roadGeo.rotateX(-Math.PI / 2);
+const roadCanvas = document.createElement('canvas');
+roadCanvas.width = 64; roadCanvas.height = 64;
+const roadCtx = roadCanvas.getContext('2d');
+// Dark asphalt base
+roadCtx.fillStyle = '#12121e';
+roadCtx.fillRect(0, 0, 64, 64);
+// Dashed center line — thin lighter stripe down the middle
+roadCtx.strokeStyle = '#2a2a40';
+roadCtx.lineWidth = 1.5;
+roadCtx.setLineDash([8, 8]);
+roadCtx.beginPath();
+roadCtx.moveTo(32, 0);
+roadCtx.lineTo(32, 64);
+roadCtx.stroke();
+const roadTex = new THREE.CanvasTexture(roadCanvas);
+roadTex.wrapS = THREE.RepeatWrapping;
+roadTex.wrapT = THREE.RepeatWrapping;
+roadTex.repeat.set(1, 1);
+
 const roadMat = new THREE.MeshStandardMaterial({
   color: 0x1c1c32, roughness: 0.75, metalness: 0.1,
   emissive: 0x0c0c18, emissiveIntensity: 0.3,
+  map: roadTex,
 });
 const roadMesh = new THREE.InstancedMesh(roadGeo, roadMat, ROAD_MAX);
 roadMesh.count = 0;
@@ -805,6 +839,9 @@ function assembleBuilding(p) {
   const intervals = p.intervals || [];
   const zoneDetails = zone.details;
 
+  // Per-floor hue accumulator for color gradient
+  let floorHueShift = 0;
+
   for (let f = 0; f < floorCount; f++) {
     const floorY = 0.4 + f * FLOOR_H;
     const heightRatio = f / floorCount;
@@ -812,10 +849,19 @@ function assembleBuilding(p) {
     curW *= (1 - zone.taper);
     curD *= (1 - zone.taper);
 
+    // Accumulate a small random hue shift each floor (±0.02)
+    floorHueShift += (rng() - 0.5) * 0.04;
+    const floorHsl = {}; blendColor.getHSL(floorHsl);
+    const floorColor = new THREE.Color().setHSL(
+      (floorHsl.h + floorHueShift + 1) % 1,
+      floorHsl.s,
+      floorHsl.l
+    );
+
     // Floor texture — color varies slightly per floor
     const cols = Math.max(2, Math.round(curW / 2));
     const tex = makeWindowTex(1, cols,
-      colorToHex(blendColor.clone().multiplyScalar(0.35 + rng() * 0.2)),
+      colorToHex(floorColor.clone().multiplyScalar(0.35 + rng() * 0.2)),
       buildingLitP, rng);
     const mat = buildingMat(tex, { rough: zone.rough, met: zone.met });
     mat.emissiveIntensity = buildingEmissive;
@@ -940,6 +986,19 @@ function assembleBuilding(p) {
       g.add(ch);
     }
   }
+
+  // Spawn pulse ring — ground-level emissive ring that fades out on spawn
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: blendColor.clone(),
+    transparent: true,
+    opacity: 0.6,
+    depthWrite: false,
+  });
+  const spawnRing = new THREE.Mesh(new THREE.TorusGeometry(footW * 0.8, 0.25, 8, 24), ringMat);
+  spawnRing.rotation.x = -Math.PI / 2;
+  spawnRing.position.y = 0.05;
+  g.add(spawnRing);
+  g.userData.spawnRing = spawnRing;
 
   return g;
 }
@@ -1139,6 +1198,15 @@ function animate() {
     const s = spawning[i];
     s.progress = Math.min(1, s.progress + 0.02);
     s.group.scale.y = easeOutBack(s.progress);
+    // Fade and remove spawn ring as progress completes
+    const ring = s.group.userData.spawnRing;
+    if (ring) {
+      ring.material.opacity = 0.6 * (1 - s.progress);
+      if (s.progress >= 1) {
+        s.group.remove(ring);
+        delete s.group.userData.spawnRing;
+      }
+    }
     if (s.progress >= 1) spawning.splice(i, 1);
   }
   renderer.render(scene, camera);
