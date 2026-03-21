@@ -15,8 +15,8 @@
   }
   #chord-display {
     margin-top: 10px; background: rgba(0,0,0,0.7); padding: 10px 16px;
-    border-radius: 8px; font-size: 20px; border: 1px solid rgba(255,255,255,0.1);
-    backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.3s;
+    border-radius: 8px; font-size: 24px; border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.3s, text-shadow 0.3s;
   }
   #chord-display.visible { opacity: 1; }
   #info {
@@ -193,10 +193,26 @@ const starMat = new THREE.PointsMaterial({
 });
 scene.add(new THREE.Points(starGeo, starMat));
 
-// Ground — darker with subtle metalness for a wet/reflective look
+// Ground — canvas noise texture for asphalt/earth look
+const groundCanvas = document.createElement('canvas');
+groundCanvas.width = 256; groundCanvas.height = 256;
+const groundCtx = groundCanvas.getContext('2d');
+groundCtx.fillStyle = '#080814';
+groundCtx.fillRect(0, 0, 256, 256);
+for (let i = 0; i < 4000; i++) {
+  const px = Math.floor(Math.random() * 256);
+  const py = Math.floor(Math.random() * 256);
+  const v = Math.floor(Math.random() * 18) + 6;
+  groundCtx.fillStyle = `rgb(${v},${v},${v + 4})`;
+  groundCtx.fillRect(px, py, 1, 1);
+}
+const groundTex = new THREE.CanvasTexture(groundCanvas);
+groundTex.wrapS = THREE.RepeatWrapping;
+groundTex.wrapT = THREE.RepeatWrapping;
+groundTex.repeat.set(20, 20);
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(800, 800),
-  new THREE.MeshStandardMaterial({ color: 0x080814, roughness: 0.88, metalness: 0.15 })
+  new THREE.MeshStandardMaterial({ map: groundTex, color: 0x080814, roughness: 0.88, metalness: 0.15 })
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.02;
@@ -605,7 +621,16 @@ const seededRandom = (seed) => {
 };
 
 // ===================== TEXTURES & MATERIALS =====================
-function makeWindowTex(floors, cols, bodyHex, litProb, rng) {
+const ZONE_WINDOW_TINTS = {
+  hightech:   ['#88ccff', '#aaddff', '#66bbee'],
+  industrial: ['#ffaa44', '#ff8833', '#ffcc66'],
+  village:    ['#ddbb66', '#ccaa55', '#eedd88'],
+  religious:  ['#ffdd88', '#eebb55', '#ffcc77'],
+};
+const DEFAULT_WINDOW_TINTS = ['#ffdd88', '#ffeebb', '#aaccee'];
+
+function makeWindowTex(floors, cols, bodyHex, litProb, rng, windowTint) {
+  const tints = windowTint || DEFAULT_WINDOW_TINTS;
   const sz = 256, c = document.createElement('canvas');
   c.width = sz; c.height = sz;
   const ctx = c.getContext('2d');
@@ -617,7 +642,7 @@ function makeWindowTex(floors, cols, bodyHex, litProb, rng) {
       const wx = ci*cw + cw*0.18, wy = r*ch + ch*0.12;
       if (rng() < litProb) {
         const t = rng();
-        ctx.fillStyle = t > 0.6 ? '#ffdd88' : t > 0.3 ? '#ffeebb' : '#aaccee';
+        ctx.fillStyle = t > 0.6 ? tints[0] : t > 0.3 ? tints[1] : tints[2];
       } else {
         ctx.fillStyle = '#08080f';
       }
@@ -756,11 +781,13 @@ let sessionZone = ZONES[sessionZoneName];
 
 const zoneEl = document.getElementById('zone-name');
 zoneEl.textContent = sessionZoneName;
+zoneEl.style.color = '#' + sessionZone.palettes[0].toString(16).padStart(6, '0');
 
 function pickNewZone() {
   sessionZoneName = ZONE_NAMES[Math.floor(Math.random() * ZONE_NAMES.length)];
   sessionZone = ZONES[sessionZoneName];
   zoneEl.textContent = sessionZoneName;
+  zoneEl.style.color = '#' + sessionZone.palettes[0].toString(16).padStart(6, '0');
 }
 
 // ===================== PER-BUILDING MOOD =====================
@@ -862,7 +889,7 @@ function assembleBuilding(p) {
     const cols = Math.max(2, Math.round(curW / 2));
     const tex = makeWindowTex(1, cols,
       colorToHex(floorColor.clone().multiplyScalar(0.35 + rng() * 0.2)),
-      buildingLitP, rng);
+      buildingLitP, rng, ZONE_WINDOW_TINTS[p.zoneName]);
     const mat = buildingMat(tex, { rough: zone.rough, met: zone.met });
     mat.emissiveIntensity = buildingEmissive;
 
@@ -1027,6 +1054,7 @@ function addBuilding(chord, velocity) {
     intervals: chord.intervals || [],
     root: chord.root,
     prevColor,
+    zoneName: sessionZoneName,
   });
 
   group.position.set(world.x, 0, world.z);
@@ -1060,6 +1088,11 @@ function detectChord(notes) {
   return { root, name: NOTE_NAMES[root], type: CHORD_MAP[intervals.join(',')] || 'chord', notes: sorted, intervals };
 }
 
+function zoneGlowHex() {
+  const p = sessionZone.palettes[0];
+  return '#' + p.toString(16).padStart(6, '0');
+}
+
 function tryDetectChord() {
   const notes = [...heldNotes.keys()];
   if (notes.length >= 3) {
@@ -1067,6 +1100,8 @@ function tryDetectChord() {
     if (chord) {
       const avg = chord.notes.map(n => heldNotes.get(n) || 80).reduce((a,b) => a+b, 0) / chord.notes.length;
       chordEl.textContent = `${chord.name} ${chord.type}`;
+      const glowHex = zoneGlowHex();
+      chordEl.style.textShadow = `0 0 12px ${glowHex}, 0 0 24px ${glowHex}`;
       chordEl.classList.add('visible');
       setTimeout(() => chordEl.classList.remove('visible'), 1500);
       addBuilding(chord, avg);
@@ -1193,6 +1228,12 @@ function animate() {
   // Star twinkling — sine wave on opacity and size
   starMat.opacity = 0.55 + 0.2 * Math.sin(animTime * 1.3);
   starMat.size = 0.35 + 0.12 * Math.sin(animTime * 0.9 + 1.2);
+
+  // Subtle building sway — very slight breeze oscillation
+  for (const b of buildings) {
+    b.group.rotation.x = Math.sin(animTime * 0.3 + b.gx * 0.5) * 0.003;
+    b.group.rotation.z = Math.sin(animTime * 0.3 + b.gz * 0.5 + 1.2) * 0.003;
+  }
 
   for (let i = spawning.length-1; i >= 0; i--) {
     const s = spawning[i];
