@@ -511,171 +511,140 @@ const INTERVAL_DETAILS = {
   10: 'antenna', 11: 'antenna', 14: 'waterTank',
 };
 
-// ===================== BUILDING GENERATORS =====================
-function buildSkyscraper(p) {
+// ===================== COMPOSITE BUILDING ASSEMBLY =====================
+function assembleBuilding(p) {
   const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/4), Math.max(2,Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
-  g.add(Object.assign(new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style)), { position: new THREE.Vector3(0, p.h/2, 0) }));
-  g.add(Object.assign(new THREE.Mesh(new THREE.BoxGeometry(p.w*0.7, 0.3, p.d*0.7), solidMat(0x445566, 0.5, 0.5)), { position: new THREE.Vector3(0, p.h+0.15, 0) }));
-  return g;
-}
+  const growth = GROWTH[p.chordType] || GROWTH.chord;
+  const style = p.style;
+  const rng = p.rng;
 
-function buildGothic(p) {
-  const g = new THREE.Group();
-  const w = p.w * 0.75;
-  const tex = makeWindowTex(Math.round(p.h/5), Math.max(2,Math.round(w/4)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, p.h, p.d*0.8), buildingMat(tex, p.style));
-  body.position.y = p.h/2; g.add(body);
-  const sH = p.h * 0.4;
-  const spire = new THREE.Mesh(new THREE.ConeGeometry(w*0.35, sH, 4), solidMat(p.color.clone().multiplyScalar(0.6), 0.9, 0.1));
-  spire.position.y = p.h + sH/2; spire.rotation.y = Math.PI/4; g.add(spire);
-  return g;
-}
+  // Floor count directly from velocity (3-18)
+  const floorCount = Math.max(3, Math.min(18, Math.round(3 + (p.velocity / 127) * 15)));
 
-function buildIndustrial(p) {
-  const g = new THREE.Group();
-  const bh = p.h * 0.6;
-  const tex = makeWindowTex(Math.round(bh/5), Math.max(2,Math.round(p.w/3)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w*1.1, bh, p.d*1.05), buildingMat(tex, p.style));
-  body.position.y = bh/2; g.add(body);
-  for (let i = 0; i < 2 + Math.floor(p.rng()*2); i++) {
-    const ch = p.h*(0.3+p.rng()*0.3), cr = 0.5+p.rng()*0.4;
-    const c = new THREE.Mesh(new THREE.CylinderGeometry(cr, cr*1.1, ch, 6), solidMat(p.color.clone().multiplyScalar(0.5), 0.95, 0.05));
-    c.position.set((p.rng()-0.5)*p.w*0.6, bh+ch/2, (p.rng()-0.5)*p.d*0.5); g.add(c);
+  // Base footprint
+  let footW = Math.min(CELL_FIT, 4 + p.noteCount * 0.8 + rng() * 2);
+  let footD = Math.min(CELL_FIT, 4 + rng() * 2);
+
+  // Base slab
+  const baseMat = solidMat(p.color.clone().multiplyScalar(0.6), 0.85, 0.15);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(footW + 0.5, 0.4, footD + 0.5), baseMat);
+  base.position.y = 0.2;
+  g.add(base);
+
+  // Grow floors
+  let curW = footW, curD = footD;
+  const floorGeo = PARTS[growth.floorGeo];
+  const intervals = p.intervals || [];
+
+  for (let f = 0; f < floorCount; f++) {
+    const floorY = 0.4 + f * FLOOR_H;
+    const heightRatio = f / floorCount;
+
+    // Taper
+    curW *= (1 - growth.taper);
+    curD *= (1 - growth.taper);
+
+    // Floor texture
+    const cols = Math.max(2, Math.round(curW / 2));
+    const tex = makeWindowTex(1, cols,
+      colorToHex(p.color.clone().multiplyScalar(0.4 + rng() * 0.15)),
+      style.litP, rng);
+    const mat = buildingMat(tex, style);
+
+    // Floor mesh
+    const floor = new THREE.Mesh(floorGeo, mat);
+    floor.scale.set(curW, 1, curD);
+    floor.position.y = floorY + FLOOR_H / 2;
+    g.add(floor);
+
+    // Organic offset
+    if (rng() < growth.organic * 0.3) {
+      floor.position.x += (rng() - 0.5) * 0.4;
+      floor.position.z += (rng() - 0.5) * 0.4;
+    }
+
+    // Mutations (chance increases with height)
+    const mutateChance = growth.mutateBase + heightRatio * 0.15;
+    if (rng() < mutateChance) {
+      const roll = rng();
+      if (roll < 0.4) {
+        // Balcony protrusion
+        const balcony = new THREE.Mesh(PARTS.balcony, baseMat);
+        const side = rng() > 0.5 ? 1 : -1;
+        if (rng() > 0.5) {
+          balcony.position.set(0, floorY + 0.15, side * (curD / 2 + 0.15));
+          balcony.scale.set(curW * 0.6, 1, 1);
+        } else {
+          balcony.position.set(side * (curW / 2 + 0.15), floorY + 0.15, 0);
+          balcony.scale.set(1, 1, curD * 0.6);
+          balcony.rotation.y = Math.PI / 2;
+        }
+        g.add(balcony);
+      } else if (roll < 0.7) {
+        // Setback — shrink remaining floors
+        curW *= 0.85;
+        curD *= 0.85;
+      } else {
+        // Cantilever — widen this floor
+        floor.scale.set(curW * 1.12, 1, curD * 1.12);
+      }
+    }
+
+    // Detail pass — driven by chord intervals
+    for (const iv of intervals) {
+      const detailKey = INTERVAL_DETAILS[iv];
+      if (!detailKey || !PARTS[detailKey]) continue;
+      if (rng() > 0.35) continue;
+
+      const isVine = detailKey === 'vine';
+      const detail = new THREE.Mesh(PARTS[detailKey],
+        isVine
+          ? solidMat(new THREE.Color().setHSL(0.3, 0.5, 0.2 + rng() * 0.1), 0.9, 0.05)
+          : solidMat(p.color.clone().multiplyScalar(0.5 + rng() * 0.2), 0.7, 0.3)
+      );
+
+      const face = rng();
+      if (face < 0.25) {
+        detail.position.set(curW / 2 + 0.08, floorY + FLOOR_H * 0.5, (rng() - 0.5) * curD * 0.6);
+      } else if (face < 0.5) {
+        detail.position.set(-curW / 2 - 0.08, floorY + FLOOR_H * 0.5, (rng() - 0.5) * curD * 0.6);
+      } else if (face < 0.75) {
+        detail.position.set((rng() - 0.5) * curW * 0.6, floorY + FLOOR_H * 0.5, curD / 2 + 0.08);
+      } else {
+        detail.position.set((rng() - 0.5) * curW * 0.6, floorY + FLOOR_H * 0.5, -curD / 2 - 0.08);
+      }
+      g.add(detail);
+    }
   }
-  return g;
-}
 
-function buildDome(p) {
-  const g = new THREE.Group();
-  const bH = p.h*0.65, rad = Math.min(p.w,p.d)*0.48;
-  const tex = makeWindowTex(Math.round(bH/4.5), Math.max(2,Math.round(rad*2/4)), colorToHex(p.color.clone().multiplyScalar(0.5)), p.style.litP, p.rng);
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad*1.05, bH, 16), buildingMat(tex, p.style));
-  base.position.y = bH/2; g.add(base);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(rad, 16, 10, 0, Math.PI*2, 0, Math.PI/2), solidMat(p.color.clone().multiplyScalar(0.8), 0.3, 0.6));
-  dome.position.y = bH; g.add(dome);
-  return g;
-}
+  // Cap
+  const capY = 0.4 + floorCount * FLOOR_H;
+  const capGeo = PARTS[growth.cap];
+  const isGarden = growth.cap === 'capGarden';
+  const capMesh = new THREE.Mesh(capGeo,
+    isGarden
+      ? solidMat(new THREE.Color().setHSL(0.3, 0.4, 0.25), 0.9, 0.05)
+      : solidMat(p.color.clone().multiplyScalar(0.7), 0.5, 0.3)
+  );
+  capMesh.scale.set(curW, 1, curD);
+  capMesh.position.y = capY;
+  if (growth.cap === 'capPitched') capMesh.rotation.y = Math.PI / 4;
+  g.add(capMesh);
 
-function buildArtDeco(p) {
-  const g = new THREE.Group();
-  let y = 0, tw = p.w, td = p.d;
-  for (let i = 0; i < 3; i++) {
-    const th = p.h/3*(1+(3-i)*0.15);
-    const tex = makeWindowTex(Math.round(th/4.5), Math.max(2,Math.round(tw/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
-    const tier = new THREE.Mesh(new THREE.BoxGeometry(tw, th, td), buildingMat(tex, p.style));
-    tier.position.y = y + th/2; g.add(tier);
-    y += th; tw *= 0.72; td *= 0.72;
+  // Rooftop details
+  if (intervals.includes(10) || intervals.includes(11)) {
+    const ant = new THREE.Mesh(PARTS.antenna, solidMat(0x666677, 0.5, 0.6));
+    ant.position.set((rng() - 0.5) * curW * 0.4, capY + 1.25, (rng() - 0.5) * curD * 0.4);
+    g.add(ant);
   }
-  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.3, p.h*0.15, 5), solidMat(0xccaa55, 0.3, 0.8));
-  ant.position.y = y + p.h*0.075; g.add(ant);
-  return g;
-}
-
-function buildCathedral(p) {
-  const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/5.5), Math.max(2,Math.round(p.w/4.5)), colorToHex(p.color.clone().multiplyScalar(0.35)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
-  body.position.y = p.h/2; g.add(body);
-  const sH = p.h*0.6;
-  const spire = new THREE.Mesh(new THREE.ConeGeometry(p.w*0.16, sH, 4), solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05));
-  spire.position.y = p.h + sH/2; spire.rotation.y = Math.PI/4; g.add(spire);
-  for (const s of [-1,1]) {
-    const tH = p.h*0.3;
-    const tw = new THREE.Mesh(new THREE.BoxGeometry(p.w*0.2, tH, p.d*0.2), solidMat(p.color.clone().multiplyScalar(0.5), 0.85, 0.08));
-    tw.position.set(s*p.w*0.42, p.h+tH/2, 0); g.add(tw);
-    const ms = new THREE.Mesh(new THREE.ConeGeometry(p.w*0.09, tH*0.5, 4), solidMat(p.color.clone().multiplyScalar(0.45), 0.9, 0.05));
-    ms.position.set(s*p.w*0.42, p.h+tH+tH*0.25, 0); ms.rotation.y = Math.PI/4; g.add(ms);
+  if (intervals.includes(14)) {
+    const tank = new THREE.Mesh(PARTS.waterTank, solidMat(0x556666, 0.6, 0.4));
+    tank.position.set((rng() - 0.5) * curW * 0.3, capY + 0.3, (rng() - 0.5) * curD * 0.3);
+    g.add(tank);
   }
+
   return g;
 }
-
-function buildCrystal(p) {
-  const g = new THREE.Group();
-  const rad = Math.min(p.w,p.d)*0.4;
-  const tex = makeWindowTex(Math.round(p.h/3.5), 8, colorToHex(p.color.clone().multiplyScalar(0.55)), p.style.litP, p.rng);
-  const mat = buildingMat(tex, p.style); mat.transparent = true; mat.opacity = 0.88;
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad*1.02, p.h, 8), mat);
-  body.position.y = p.h/2; g.add(body);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(rad*0.9, 0.2, 6, 8), new THREE.MeshBasicMaterial({ color: 0x88ccff }));
-  ring.position.y = p.h; ring.rotation.x = Math.PI/2; g.add(ring);
-  return g;
-}
-
-function buildFactory(p) {
-  const g = new THREE.Group();
-  const bh = p.h*0.55, bw = p.w*1.15;
-  const tex = makeWindowTex(Math.round(bh/5), Math.max(2,Math.round(bw/3)), colorToHex(p.color.clone().multiplyScalar(0.4)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, p.d*1.05), buildingMat(tex, p.style));
-  body.position.y = bh/2; g.add(body);
-  const teeth = 3 + Math.floor(p.rng()*2);
-  const segW = bw / teeth;
-  for (let i = 0; i < teeth; i++) {
-    const rH = p.h*0.15 + p.rng()*p.h*0.08;
-    const roof = new THREE.Mesh(new THREE.CylinderGeometry(segW*0.4, segW*0.4, p.d*1.05, 3), solidMat(p.color.clone().multiplyScalar(0.55), 0.85, 0.1));
-    roof.rotation.set(Math.PI/2, 0, Math.PI/6);
-    roof.position.set(-bw/2 + segW*(i+0.5), bh + rH*0.35, 0);
-    roof.scale.x = rH/(segW*0.4); g.add(roof);
-  }
-  return g;
-}
-
-function buildWaterTower(p) {
-  const g = new THREE.Group();
-  const legH = p.h*0.6, tankH = p.h*0.35, legR = 0.3, tankR = Math.min(p.w,p.d)*0.35;
-  for (let lx=-1;lx<=1;lx+=2) for (let lz=-1;lz<=1;lz+=2) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(legR, legR, legH, 5), solidMat(0x667788, 0.5, 0.6));
-    leg.position.set(lx*tankR*0.55, legH/2, lz*tankR*0.55); g.add(leg);
-  }
-  const tank = new THREE.Mesh(new THREE.CylinderGeometry(tankR, tankR*0.9, tankH, 12), solidMat(p.color, p.style.rough, p.style.met));
-  tank.position.y = legH + tankH/2; g.add(tank);
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(tankR*0.85, tankH*0.4, 12), solidMat(p.color.clone().multiplyScalar(0.8), 0.6, 0.4));
-  cap.position.y = legH + tankH + tankH*0.2; g.add(cap);
-  return g;
-}
-
-function buildArch(p) {
-  const g = new THREE.Group();
-  const pH = p.h*0.85, pW = p.w*0.22, gap = p.w*0.5;
-  const am = solidMat(p.color, p.style.rough, p.style.met);
-  for (const s of [-1,1]) {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(pW, pH, p.d*0.6), am);
-    pillar.position.set(s*gap/2, pH/2, 0); g.add(pillar);
-  }
-  const arch = new THREE.Mesh(new THREE.TorusGeometry(gap/2, pW*0.4, 6, 12, Math.PI), am);
-  arch.position.y = pH; g.add(arch);
-  const lintel = new THREE.Mesh(new THREE.BoxGeometry(gap+pW, pW*0.5, p.d*0.6), am);
-  lintel.position.y = pH + gap/2 + pW*0.15; g.add(lintel);
-  return g;
-}
-
-function buildBrutalist(p) {
-  const g = new THREE.Group();
-  for (let i = 0; i < 2+Math.floor(p.rng()*2); i++) {
-    const bw = p.w*(0.5+p.rng()*0.5), bh = p.h*(0.4+p.rng()*0.5), bd = p.d*(0.5+p.rng()*0.5);
-    const tex = makeWindowTex(Math.max(2,Math.round(bh/6)), Math.max(2,Math.round(bw/5)),
-      colorToHex(p.color.clone().multiplyScalar(0.4+p.rng()*0.15)), p.style.litP, p.rng);
-    const block = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), buildingMat(tex, p.style));
-    block.position.set((p.rng()-0.5)*p.w*0.25, bh/2, (p.rng()-0.5)*p.d*0.25); g.add(block);
-  }
-  return g;
-}
-
-function buildGeneric(p) {
-  const g = new THREE.Group();
-  const tex = makeWindowTex(Math.round(p.h/4.5), Math.max(2,Math.round(p.w/3.5)), colorToHex(p.color.clone().multiplyScalar(0.45)), p.style.litP, p.rng);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), buildingMat(tex, p.style));
-  body.position.y = p.h/2; g.add(body);
-  return g;
-}
-
-const GENERATORS = {
-  maj:buildSkyscraper, min:buildGothic, dim:buildIndustrial, aug:buildDome,
-  dom7:buildArtDeco, min7:buildCathedral, maj7:buildCrystal, dim7:buildFactory,
-  sus2:buildWaterTower, sus4:buildArch, power:buildBrutalist,
-  chord:buildGeneric, minMaj7:buildGothic, minadd9:buildGothic,
-  add9:buildDome, min9:buildCathedral, dom9:buildArtDeco, maj9:buildCrystal,
-};
 
 // ===================== ADD BUILDING =====================
 function addBuilding(chord, velocity) {
@@ -687,20 +656,25 @@ function addBuilding(chord, velocity) {
   if (!placement) return;
   const { gx, gz, algo } = placement;
   const world = gridToWorld(gx, gz);
-  const maxFoot = CELL_SIZE * 0.85;
-  const h = 12 + (velocity/127)*40 + rng()*12;
-  const w = Math.min(maxFoot, 5 + chord.notes.length*1.2 + rng()*3);
-  const d = Math.min(maxFoot, 5 + rng()*3);
-  const gen = GENERATORS[chord.type] || buildGeneric;
-  const group = gen({ h, w, d, color, style, rng });
+
+  const group = assembleBuilding({
+    velocity,
+    color,
+    style,
+    rng,
+    chordType: chord.type,
+    noteCount: chord.notes.length,
+    intervals: chord.intervals || [],
+    root: chord.root,
+  });
+
   group.position.set(world.x, 0, world.z);
   group.rotation.y = rng() * Math.PI * 2;
   group.scale.y = 0.01;
   scene.add(group);
   spawning.push({ group, progress: 0 });
-  buildings.push(group);
+  buildings.push({ group, gx, gz, chord, velocity });
 
-  // Generate connecting roads
   generateRoadsForBuilding(gx, gz, rng);
   startRoadGrowth();
 
@@ -743,7 +717,7 @@ function updatePianoUI() {
 }
 
 function resetCity() {
-  buildings.forEach(b => scene.remove(b));
+  buildings.forEach(b => scene.remove(b.group));
   buildings.length = 0;
   spawning.length = 0;
   grid.clear();
