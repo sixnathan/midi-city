@@ -129,9 +129,14 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0a0a28, 150, 600);
 
 // Sky sphere — gradient from dark blue (top) to deep purple (horizon)
+// topColor / horizColor are uniforms so we can lerp them per zone
 const skyGeo = new THREE.SphereGeometry(800, 32, 16);
+const skyUniforms = {
+  topColor:   { value: new THREE.Color(0.02, 0.02, 0.12) },
+  horizColor: { value: new THREE.Color(0.12, 0.04, 0.22) },
+};
 const skyMat = new THREE.ShaderMaterial({
-  uniforms: {},
+  uniforms: skyUniforms,
   vertexShader: `
     varying vec3 vWorldPos;
     void main() {
@@ -140,11 +145,11 @@ const skyMat = new THREE.ShaderMaterial({
     }
   `,
   fragmentShader: `
+    uniform vec3 topColor;
+    uniform vec3 horizColor;
     varying vec3 vWorldPos;
     void main() {
       float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
-      vec3 topColor    = vec3(0.02, 0.02, 0.12);
-      vec3 horizColor  = vec3(0.12, 0.04, 0.22);
       gl_FragColor = vec4(mix(horizColor, topColor, t), 1.0);
     }
   `,
@@ -152,6 +157,21 @@ const skyMat = new THREE.ShaderMaterial({
   depthWrite: false,
 });
 scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+// Zone sky tint targets (top, horiz)
+const ZONE_SKY_TINTS = {
+  urban:      { top: new THREE.Color(0.01, 0.01, 0.15), horiz: new THREE.Color(0.05, 0.05, 0.25) },
+  village:    { top: new THREE.Color(0.08, 0.04, 0.02), horiz: new THREE.Color(0.18, 0.10, 0.04) },
+  hightech:   { top: new THREE.Color(0.00, 0.06, 0.14), horiz: new THREE.Color(0.02, 0.15, 0.20) },
+  industrial: { top: new THREE.Color(0.10, 0.02, 0.02), horiz: new THREE.Color(0.20, 0.06, 0.04) },
+  religious:  { top: new THREE.Color(0.10, 0.07, 0.00), horiz: new THREE.Color(0.22, 0.14, 0.02) },
+  suburban:   { top: new THREE.Color(0.03, 0.03, 0.10), horiz: new THREE.Color(0.10, 0.08, 0.12) },
+  commercial: { top: new THREE.Color(0.01, 0.08, 0.04), horiz: new THREE.Color(0.04, 0.15, 0.08) },
+};
+const skyTarget = {
+  top:   new THREE.Color().copy(skyUniforms.topColor.value),
+  horiz: new THREE.Color().copy(skyUniforms.horizColor.value),
+};
 
 // Fixed overhead camera — never moves
 const camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 1200);
@@ -192,6 +212,22 @@ const starMat = new THREE.PointsMaterial({
   color: 0xffffff, size: 0.4, transparent: true, opacity: 0.7,
 });
 scene.add(new THREE.Points(starGeo, starMat));
+
+// Ambient dust / firefly particles
+const DUST_COUNT = 500;
+const dustPos = new Float32Array(DUST_COUNT * 3);
+for (let i = 0; i < DUST_COUNT; i++) {
+  dustPos[i*3]   = (Math.random() - 0.5) * 300;
+  dustPos[i*3+1] = Math.random() * 60;
+  dustPos[i*3+2] = (Math.random() - 0.5) * 300;
+}
+const dustGeo = new THREE.BufferGeometry();
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+const dustMat = new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.2, transparent: true, opacity: 0.15, depthWrite: false,
+});
+const dustMesh = new THREE.Points(dustGeo, dustMat);
+scene.add(dustMesh);
 
 // Ground — canvas noise texture for asphalt/earth look
 const groundCanvas = document.createElement('canvas');
@@ -472,6 +508,9 @@ function spawnConnectors(curr, rng) {
   }
 }
 
+const _roadColor = new THREE.Color();
+const _intersectionColor = new THREE.Color(0x2e2e50); // slightly lighter than base road
+
 function addRoad(gx, gz) {
   if (!inBounds(gx, gz) || grid.has(key(gx, gz)) || roadCells.has(key(gx, gz))) return false;
   if (roadCount >= ROAD_MAX) return false;
@@ -479,10 +518,18 @@ function addRoad(gx, gz) {
   const w = gridToWorld(gx, gz);
   dummy.position.set(w.x, 0, w.z);
   dummy.updateMatrix();
-  roadMesh.setMatrixAt(roadCount, dummy.matrix);
+  const idx = roadCount;
+  roadMesh.setMatrixAt(idx, dummy.matrix);
+  // Count road neighbors to detect intersection (3+)
+  const neighborCount = DIRS.reduce((n, [dx, dz]) => n + (roadCells.has(key(gx+dx, gz+dz)) ? 1 : 0), 0);
+  if (neighborCount >= 3) {
+    _roadColor.setHex(0x1c1c32).multiplyScalar(1.3);
+    roadMesh.setColorAt(idx, _roadColor);
+  }
   roadCount++;
   roadMesh.count = roadCount;
   roadMesh.instanceMatrix.needsUpdate = true;
+  if (roadMesh.instanceColor) roadMesh.instanceColor.needsUpdate = true;
   // Streetlamp every 3rd road tile
   if (roadCount % 3 === 0) addStreetlamp(w.x, w.z);
   return true;
@@ -788,6 +835,12 @@ function pickNewZone() {
   sessionZone = ZONES[sessionZoneName];
   zoneEl.textContent = sessionZoneName;
   zoneEl.style.color = '#' + sessionZone.palettes[0].toString(16).padStart(6, '0');
+  // Set sky tint targets for smooth transition in animate()
+  const tint = ZONE_SKY_TINTS[sessionZoneName];
+  if (tint) {
+    skyTarget.top.copy(tint.top);
+    skyTarget.horiz.copy(tint.horiz);
+  }
 }
 
 // ===================== PER-BUILDING MOOD =====================
@@ -843,6 +896,15 @@ function assembleBuilding(p) {
   blendColor.setHSL(hsl.h + mood.warmth, hsl.s, hsl.l);
 
   const baseMat = solidMat(blendColor.clone().multiplyScalar(0.6), 0.85, 0.15);
+
+  // Ground-contact shadow — flat dark circle beneath building
+  const shadowCircle = new THREE.Mesh(
+    new THREE.CircleGeometry(footW * 0.6, 16),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25, depthWrite: false })
+  );
+  shadowCircle.rotation.x = -Math.PI / 2;
+  shadowCircle.position.y = 0.03;
+  g.add(shadowCircle);
 
   // Base slab
   const base = new THREE.Mesh(new THREE.BoxGeometry(footW + 0.5, 0.4, footD + 0.5), baseMat);
@@ -1224,6 +1286,20 @@ let animTime = 0;
 function animate() {
   requestAnimationFrame(animate);
   animTime += 0.016;
+
+  // Dust particle drift
+  const dp = dustGeo.attributes.position;
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dp.array[i*3]   += Math.sin(animTime + i) * 0.01;
+    dp.array[i*3+1] += 0.02;
+    dp.array[i*3+2] += Math.cos(animTime * 0.7 + i) * 0.01;
+    if (dp.array[i*3+1] > 60) dp.array[i*3+1] = 0;
+  }
+  dp.needsUpdate = true;
+
+  // Lerp sky colors toward target
+  skyUniforms.topColor.value.lerp(skyTarget.top, 0.01);
+  skyUniforms.horizColor.value.lerp(skyTarget.horiz, 0.01);
 
   // Star twinkling — sine wave on opacity and size
   starMat.opacity = 0.55 + 0.2 * Math.sin(animTime * 1.3);
