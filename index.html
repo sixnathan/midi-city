@@ -269,6 +269,135 @@ function addStreetlamp(wx, wz) {
   headMesh.instanceMatrix.needsUpdate = true;
 }
 
+// ===================== CONNECTORS (InstancedMesh pools) =====================
+const CONN_MAX = 600;
+
+const treeCanopyGeo = new THREE.ConeGeometry(0.8, 2.2, 6);
+const treeCanopyMat = new THREE.MeshStandardMaterial({
+  color: 0x2a5a2a, roughness: 0.9, metalness: 0.05,
+  emissive: 0x0a1a0a, emissiveIntensity: 0.2,
+});
+const treeMesh = new THREE.InstancedMesh(treeCanopyGeo, treeCanopyMat, CONN_MAX);
+treeMesh.count = 0;
+scene.add(treeMesh);
+
+const trunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 1.2, 5);
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.9 });
+const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, CONN_MAX);
+trunkMesh.count = 0;
+scene.add(trunkMesh);
+
+const carGeo = new THREE.BoxGeometry(1.2, 0.6, 2.2);
+const carMat = new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.5, metalness: 0.4 });
+const carMesh = new THREE.InstancedMesh(carGeo, carMat, CONN_MAX);
+carMesh.count = 0;
+scene.add(carMesh);
+
+const benchGeo = new THREE.BoxGeometry(1.5, 0.25, 0.4);
+const benchMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.8 });
+const benchMesh = new THREE.InstancedMesh(benchGeo, benchMat, CONN_MAX);
+benchMesh.count = 0;
+scene.add(benchMesh);
+
+let treeCount = 0, carCount = 0, benchCount = 0;
+
+function addTree(wx, wz) {
+  if (treeCount >= CONN_MAX) return;
+  const s = 0.7 + Math.random() * 0.6;
+  dummy.position.set(wx, 0.6 * s, wz);
+  dummy.scale.set(s, s, s);
+  dummy.updateMatrix();
+  trunkMesh.setMatrixAt(treeCount, dummy.matrix);
+  dummy.position.y = 1.8 * s;
+  dummy.updateMatrix();
+  treeMesh.setMatrixAt(treeCount, dummy.matrix);
+  treeCount++;
+  treeMesh.count = treeCount;
+  trunkMesh.count = treeCount;
+  treeMesh.instanceMatrix.needsUpdate = true;
+  trunkMesh.instanceMatrix.needsUpdate = true;
+  dummy.scale.set(1, 1, 1);
+}
+
+function addCar(wx, wz, angle) {
+  if (carCount >= CONN_MAX) return;
+  dummy.position.set(wx, 0.3, wz);
+  dummy.rotation.set(0, angle, 0);
+  dummy.updateMatrix();
+  carMesh.setMatrixAt(carCount, dummy.matrix);
+  carCount++;
+  carMesh.count = carCount;
+  carMesh.instanceMatrix.needsUpdate = true;
+  dummy.rotation.set(0, 0, 0);
+}
+
+function addBench(wx, wz, angle) {
+  if (benchCount >= CONN_MAX) return;
+  dummy.position.set(wx, 0.13, wz);
+  dummy.rotation.set(0, angle, 0);
+  dummy.updateMatrix();
+  benchMesh.setMatrixAt(benchCount, dummy.matrix);
+  benchCount++;
+  benchMesh.count = benchCount;
+  benchMesh.instanceMatrix.needsUpdate = true;
+  dummy.rotation.set(0, 0, 0);
+}
+
+function spawnConnectors(curr, rng) {
+  if (buildings.length < 2) return;
+  const prev = buildings[buildings.length - 2];
+  const prevW = gridToWorld(prev.gx, prev.gz);
+  const currW = gridToWorld(curr.gx, curr.gz);
+  const mx = (prevW.x + currW.x) / 2;
+  const mz = (prevW.z + currW.z) / 2;
+
+  const sameRoot = prev.chord.root === curr.chord.root;
+  const sameType = prev.chord.type === curr.chord.type;
+  const dist = Math.abs(prev.gx - curr.gx) + Math.abs(prev.gz - curr.gz);
+
+  if (sameRoot) {
+    // Shared courtyard — trees + bench
+    for (let i = 0; i < 2 + Math.floor(rng() * 3); i++) {
+      addTree(mx + (rng() - 0.5) * CELL_SIZE * 0.8, mz + (rng() - 0.5) * CELL_SIZE * 0.8);
+    }
+    addBench(mx + (rng() - 0.5) * 2, mz + (rng() - 0.5) * 2, rng() * Math.PI);
+  } else if (sameType) {
+    // Walkway — trees in a line
+    const steps = Math.max(2, Math.floor(dist));
+    for (let i = 0; i < steps; i++) {
+      const t = (i + 0.5) / steps;
+      addTree(
+        prevW.x + (currW.x - prevW.x) * t + (rng() - 0.5) * 2,
+        prevW.z + (currW.z - prevW.z) * t + (rng() - 0.5) * 2
+      );
+    }
+  } else {
+    // Street elements — cars
+    const angle = Math.atan2(currW.z - prevW.z, currW.x - prevW.x);
+    addCar(mx + (rng() - 0.5) * 3, mz + (rng() - 0.5) * 3, angle + (rng() - 0.5) * 0.3);
+    if (rng() < 0.5) {
+      addCar(mx + (rng() - 0.5) * 5, mz + (rng() - 0.5) * 5, angle + Math.PI + (rng() - 0.5) * 0.3);
+    }
+  }
+
+  // Adjacent tall buildings get a bridge
+  if (dist <= 2 && prev.velocity > 60 && curr.velocity > 60) {
+    const prevFloors = Math.round(3 + (prev.velocity / 127) * 15);
+    const currFloors = Math.round(3 + (curr.velocity / 127) * 15);
+    const bridgeH = 0.4 + Math.min(prevFloors, currFloors) * FLOOR_H * 0.4;
+    const dx = currW.x - prevW.x, dz = currW.z - prevW.z;
+    const length = Math.sqrt(dx * dx + dz * dz);
+    const bridge = new THREE.Mesh(
+      new THREE.BoxGeometry(length, 0.3, 0.8),
+      solidMat(0x3a3a4a, 0.7, 0.3)
+    );
+    bridge.position.set(mx, bridgeH, mz);
+    bridge.rotation.y = Math.atan2(dz, dx);
+    bridge.userData.isConnector = true;
+    scene.add(bridge);
+  }
+}
+
 function addRoad(gx, gz) {
   if (!inBounds(gx, gz) || grid.has(key(gx, gz)) || roadCells.has(key(gx, gz))) return false;
   if (roadCount >= ROAD_MAX) return false;
@@ -675,6 +804,7 @@ function addBuilding(chord, velocity) {
   spawning.push({ group, progress: 0 });
   buildings.push({ group, gx, gz, chord, velocity });
 
+  spawnConnectors(buildings[buildings.length - 1], rng);
   generateRoadsForBuilding(gx, gz, rng);
   startRoadGrowth();
 
@@ -728,6 +858,15 @@ function resetCity() {
   lampCount = 0; poleMesh.count = 0; headMesh.count = 0;
   poleMesh.instanceMatrix.needsUpdate = true;
   headMesh.instanceMatrix.needsUpdate = true;
+  // Reset connectors
+  treeCount = 0; treeMesh.count = 0; trunkMesh.count = 0;
+  treeMesh.instanceMatrix.needsUpdate = true;
+  trunkMesh.instanceMatrix.needsUpdate = true;
+  carCount = 0; carMesh.count = 0;
+  carMesh.instanceMatrix.needsUpdate = true;
+  benchCount = 0; benchMesh.count = 0;
+  benchMesh.instanceMatrix.needsUpdate = true;
+  scene.children.filter(c => c.userData?.isConnector).forEach(c => scene.remove(c));
   // Stop road growth
   if (roadInterval) { clearInterval(roadInterval); roadInterval = null; }
   countEl.textContent = '0';
